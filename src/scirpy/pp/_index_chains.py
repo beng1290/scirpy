@@ -21,7 +21,9 @@ def _get_scirpy_model(model: str) -> str:
     if model in SCIRPY_MODELS.values():
         return model
     if model not in SCIRPY_MODELS:
-        raise ValueError(f"Invalid model '{model}'. Valid models are {list(SCIRPY_MODELS.keys())}")
+        raise ValueError(
+            f"Invalid model '{model}'. Valid models are {list(SCIRPY_MODELS.keys())}"
+        )
     return SCIRPY_MODELS[model]
 
 
@@ -36,7 +38,13 @@ def index_chains(
     sort_chains_by: Mapping[str, Any] = MappingProxyType(
         # Since AIRR version v1.4.1, `duplicate_count` is deprecated in favor of `umi_count`.
         # We still keep it as sort key for backwards compatibility
-        {"umi_count": 0, "duplicate_count": 0, "consensus_count": 0, "junction": "", "junction_aa": ""}
+        {
+            "umi_count": 0,
+            "duplicate_count": 0,
+            "consensus_count": 0,
+            "junction": "",
+            "junction_aa": "",
+        }
     ),
     airr_mod: str = "airr",
     airr_key: str = "airr",
@@ -101,7 +109,11 @@ def index_chains(
 
     # only warn if those fields are in the key (i.e. this should give a warning if those are missing with
     # default settings. If the user specifies their own dictionary, they are on their own)
-    if "duplicate_count" in sort_chains_by and "consensus_count" in sort_chains_by and "umi_count" in sort_chains_by:
+    if (
+        "duplicate_count" in sort_chains_by
+        and "consensus_count" in sort_chains_by
+        and "umi_count" in sort_chains_by
+    ):
         if (
             "duplicate_count" not in params.airr.fields
             and "consensus_count" not in params.airr.fields
@@ -110,7 +122,9 @@ def index_chains(
             logging.warning("No expression information available. Cannot rank chains by expression. ")  # type: ignore
 
     if "locus" not in params.airr.fields:
-        raise ValueError("The scirpy receptor model requires a `locus` field to be specified in the AIRR data.")
+        raise ValueError(
+            "The scirpy receptor model requires a `locus` field to be specified in the AIRR data."
+        )
 
     airr = params.airr
     logging.info("Filtering chains...")
@@ -119,11 +133,18 @@ def index_chains(
     airr_idx = ak.local_index(airr, axis=1)
     # Filter out chains that do not match the filter criteria
     # we need an initial value that selects all chains in case filter is an empty list
-    airr_idx = airr_idx[reduce(operator.and_, (f(airr) for f in filter), ak.ones_like(airr_idx, dtype=bool))]
+    airr_idx = airr_idx[
+        reduce(
+            operator.and_, (f(airr) for f in filter), ak.ones_like(airr_idx, dtype=bool)
+        )
+    ]
 
     res = {}
     is_multichain = np.zeros(len(airr), dtype=bool)
-    for chain_type, locus_names in {"VJ": AirrCell.VJ_LOCI, "VDJ": AirrCell.VDJ_LOCI}.items():
+    for chain_type, locus_names in {
+        "VJ": AirrCell.VJ_LOCI,
+        "VDJ": AirrCell.VDJ_LOCI,
+    }.items():
         logging.info(f"Indexing {chain_type} chains...")
         # get the indices for all VJ / VDJ chains, respectively
         idx = airr_idx[_awkward_isin(airr["locus"][airr_idx], locus_names)]
@@ -136,7 +157,12 @@ def index_chains(
             # skip this round of sorting altogether if field not present
             if k in airr.fields:
                 logging.debug(f"Sorting chains by {k}")
-                tmp_idx = ak.argsort(ak.fill_none(airr[k][idx], default), stable=True, axis=-1, ascending=False)
+                tmp_idx = ak.argsort(
+                    ak.fill_none(airr[k][idx], default),
+                    stable=True,
+                    axis=-1,
+                    ascending=False,
+                )
                 idx = idx[tmp_idx]
             else:
                 logging.debug(f"Skip sorting by {k} because field not present")
@@ -146,7 +172,7 @@ def index_chains(
         else:
             # For multi scirpy we dont want to clip and to be compatible with the format of the dual model, pad None
             # arrays are the same size. Otherwise the indexing implementations would be different downstream.
-            idx_max = np.max(ak.num(idx)) + 1
+            idx_max = max(np.max(ak.num(idx)), 1)
             res[chain_type] = ak.pad_none(idx, idx_max, axis=1)
         #
         is_multichain |= ak.to_numpy(_awkward_len(idx)) > 2
