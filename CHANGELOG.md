@@ -8,15 +8,43 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
-## [Unreleased]
+## v0.22.3
+
+### Fixes
+
+- Fix that `group_abundance` failed in some cases when not all cells were shared between GEX and AIRR modalities ([#463](https://github.com/scverse/scirpy/pull/463)).
+- Fix that `chain_qc` did not mark cells as "no IR" if they were not contained in the AIRR modalitiy ([#463](https://github.com/scverse/scirpy/pull/463)).
+
+## v0.22.2
+
+### Fixes
+
+- Fix `tl.alpha_diversity` issue with `inplace=True` ([#632](https://github.com/scverse/scirpy/pull/632)).
+- Contig ID is now read into `sequence_id` AIRR field from 10x Genomics CSV files ([#635](https://github.com/scverse/scirpy/pull/635)).
+- Fix an issue in `tl.define_clonotype_clusters` that occured when there were more unique V genes than receptor configurations ([#639](https://github.com/scverse/scirpy/pull/639)).
+
+### Chore
+
+- Example datasets are now hosted on AWS S3 instead of figshare. This should increase reliability and speed ([#628](https://github.com/scverse/scirpy/pull/628)).
+
+## v0.22.1
+
+### Performance improvements
+
+- The stacking of the result matrix blocks of the GPU implementation of the Hamming distance metric has been reimplemented with Numba ([#617](https://github.com/scverse/scirpy/pull/617)).
 
 ### Fixes
 
 - Ensure that clonotype network plots don't have any axis ticks ([#607](https://github.com/scverse/scirpy/pull/607)).
+- Load `sequence`, `sequence_aa` and `sequence_id` fields when reading from 10x JSON format ([#619](https://github.com/scverse/scirpy/pull/619)).
 
 ### Chore
 
 - Update template to v0.5.0 ([#608](https://github.com/scverse/scirpy/pull/608/), [#606](https://github.com/scverse/scirpy/pull/606/))
+
+### Documentation
+
+- Fix code snippet for merging AIRR data into unimodal AnnData in "data structure" section ([#620](https://github.com/scverse/scirpy/pull/620/))
 
 ## v0.22.0
 
