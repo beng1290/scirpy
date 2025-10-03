@@ -5,13 +5,11 @@
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
 
 # -- Path setup --------------------------------------------------------------
+import os
 import sys
 from datetime import datetime
 from importlib.metadata import metadata
 from pathlib import Path
-
-import os
-
 
 HERE = Path(__file__).parent
 sys.path.insert(0, str(HERE / "extensions"))
@@ -143,7 +141,6 @@ html_static_path = ["_static"]
 html_title = project_name
 html_logo = "img/scirpy_logo.png"
 html_css_files = ["css/custom.css"]
-
 
 html_theme_options = {
     "repository_url": repository_url,

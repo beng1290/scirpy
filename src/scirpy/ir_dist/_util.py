@@ -141,7 +141,7 @@ def _merge_receptor_types(df):
 
 
 class ReverseLookupTable:
-    def __init__(self, dist_type: Literal["boolean", "numeric"], size: int):
+    def __init__(self, dist_type: Literal["boolean", "numeric"], size: int, dist_mat: np.ndarray | sp.csr_matrix):
         """Reverse lookup table holds a mask that indicates which objects
         are neighbors of an object with a given index `i`.
 
@@ -161,18 +161,29 @@ class ReverseLookupTable:
             Either `boolean` or `numeric`
         size
             The size of the masks.
+        dist_mat
+            A pointer to the associated distance matrix. This makes it easier to find the
+            corresponding distance matrix from an instance of the ReverseLookupTable
         """
         if dist_type not in ["boolean", "numeric"]:
             raise ValueError("invalid dist_type")
         self.dist_type = dist_type
         self.size = size
         self.lookup: dict[Hashable, sp.coo_matrix] = {}
+        self.dist_mat = dist_mat
+
+    @property
+    def dist_mat_size(self) -> int:
+        assert self.dist_mat.shape is not None
+        assert self.dist_mat.shape[0] == self.dist_mat.shape[1]
+        return self.dist_mat.shape[0]
 
     @staticmethod
     def from_dict_of_indices(
         dict_of_indices: Mapping,
         dist_type: Literal["boolean", "numeric"],
         size: int,
+        dist_mat: np.ndarray | sp.csr_matrix,
     ):
         """Convert a dict of indices to a ReverseLookupTable of row masks.
 
@@ -185,7 +196,7 @@ class ReverseLookupTable:
         size
             The size of the masks
         """
-        rlt = ReverseLookupTable(dist_type, size)
+        rlt = ReverseLookupTable(dist_type, size, dist_mat)
 
         # convert into coo matrices (numeric distances) or numpy boolean arrays.
         for k, v in dict_of_indices.items():
@@ -462,4 +473,6 @@ class DoubleLookupNeighborFinder:
             except KeyError:
                 tmp_reverse_lookup[tmp_key] = [i]
 
-        return ReverseLookupTable.from_dict_of_indices(tmp_reverse_lookup, dist_type, self.n_cols)
+        return ReverseLookupTable.from_dict_of_indices(
+            tmp_reverse_lookup, dist_type, self.n_cols, self.distance_matrices[distance_matrix]
+        )
