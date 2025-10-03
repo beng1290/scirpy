@@ -10,7 +10,7 @@ import numpy as np
 from scanpy import logging
 
 from scirpy.io._datastructures import AirrCell
-from scirpy.util import DataHandler, SCIRPY_DUAL_IR_MODEL, SCIRPY_MODELS
+from scirpy.util import SCIRPY_DUAL_IR_MODEL, SCIRPY_MODELS, DataHandler
 
 # make these constants available to numba
 _VJ_LOCI = tuple(AirrCell.VJ_LOCI)
@@ -21,9 +21,7 @@ def _get_scirpy_model(model: str) -> str:
     if model in SCIRPY_MODELS.values():
         return model
     if model not in SCIRPY_MODELS:
-        raise ValueError(
-            f"Invalid model '{model}'. Valid models are {list(SCIRPY_MODELS.keys())}"
-        )
+        raise ValueError(f"Invalid model '{model}'. Valid models are {list(SCIRPY_MODELS.keys())}")
     return SCIRPY_MODELS[model]
 
 
@@ -109,11 +107,7 @@ def index_chains(
 
     # only warn if those fields are in the key (i.e. this should give a warning if those are missing with
     # default settings. If the user specifies their own dictionary, they are on their own)
-    if (
-        "duplicate_count" in sort_chains_by
-        and "consensus_count" in sort_chains_by
-        and "umi_count" in sort_chains_by
-    ):
+    if "duplicate_count" in sort_chains_by and "consensus_count" in sort_chains_by and "umi_count" in sort_chains_by:
         if (
             "duplicate_count" not in params.airr.fields
             and "consensus_count" not in params.airr.fields
@@ -122,9 +116,7 @@ def index_chains(
             logging.warning("No expression information available. Cannot rank chains by expression. ")  # type: ignore
 
     if "locus" not in params.airr.fields:
-        raise ValueError(
-            "The scirpy receptor model requires a `locus` field to be specified in the AIRR data."
-        )
+        raise ValueError("The scirpy receptor model requires a `locus` field to be specified in the AIRR data.")
 
     airr = params.airr
     logging.info("Filtering chains...")
@@ -133,11 +125,7 @@ def index_chains(
     airr_idx = ak.local_index(airr, axis=1)
     # Filter out chains that do not match the filter criteria
     # we need an initial value that selects all chains in case filter is an empty list
-    airr_idx = airr_idx[
-        reduce(
-            operator.and_, (f(airr) for f in filter), ak.ones_like(airr_idx, dtype=bool)
-        )
-    ]
+    airr_idx = airr_idx[reduce(operator.and_, (f(airr) for f in filter), ak.ones_like(airr_idx, dtype=bool))]
 
     res = {}
     is_multichain = np.zeros(len(airr), dtype=bool)

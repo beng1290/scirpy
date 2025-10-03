@@ -15,7 +15,7 @@ from scanpy import logging
 from scirpy.ir_dist import MetricType, _get_metric_key
 from scirpy.ir_dist._clonotype_neighbors import ClonotypeNeighbors
 from scirpy.pp import ir_dist
-from scirpy.util import DataHandler, SCIRPY_DUAL_IR_MODEL, read_cell_indices
+from scirpy.util import SCIRPY_DUAL_IR_MODEL, DataHandler, read_cell_indices
 from scirpy.util.graph import igraph_from_sparse_matrix, layout_components
 
 _common_doc = """\
@@ -176,20 +176,14 @@ def _validate_parameters(
 
     if distance_key is None:
         if reference is not None:
-            distance_key = (
-                f"ir_dist_{_get_db_name()}_{sequence}_{_get_metric_key(metric)}"
-            )
+            distance_key = f"ir_dist_{_get_db_name()}_{sequence}_{_get_metric_key(metric)}"
         else:
             distance_key = f"ir_dist_{sequence}_{_get_metric_key(metric)}"
     if distance_key not in params.adata.uns:
-        raise ValueError(
-            "Sequence distances were not found in `adata.uns`. Did you run `pp.ir_dist`?"
-        )
+        raise ValueError("Sequence distances were not found in `adata.uns`. Did you run `pp.ir_dist`?")
     if key_added is None:
         if reference is not None:
-            key_added = (
-                f"ir_query_{_get_db_name()}_{sequence}_{_get_metric_key(metric)}"
-            )
+            key_added = f"ir_query_{_get_db_name()}_{sequence}_{_get_metric_key(metric)}"
         else:
             key_added = f"cc_{sequence}_{_get_metric_key(metric)}"
 
@@ -332,12 +326,8 @@ def define_clonotype_clusters(
     else:
         part = g.clusters(mode="weak")
 
-    clonotype_cluster_series = pd.Series(
-        data=None, index=params.adata.obs_names, dtype=str
-    )
-    clonotype_cluster_size_series = pd.Series(
-        data=None, index=params.adata.obs_names, dtype=int
-    )
+    clonotype_cluster_series = pd.Series(data=None, index=params.adata.obs_names, dtype=str)
+    clonotype_cluster_size_series = pd.Series(data=None, index=params.adata.obs_names, dtype=int)
 
     #
     clonotype_distance_res = {
@@ -357,12 +347,8 @@ def define_clonotype_clusters(
             ),
             strict=False,
         )
-        clonotype_cluster_series = pd.Series(values, index=idx).reindex(
-            params.adata.obs_names
-        )
-        clonotype_cluster_size_series = clonotype_cluster_series.groupby(
-            clonotype_cluster_series
-        ).transform("count")
+        clonotype_cluster_series = pd.Series(values, index=idx).reindex(params.adata.obs_names)
+        clonotype_cluster_size_series = clonotype_cluster_series.groupby(clonotype_cluster_series).transform("count")
     else:
         # unpack clonotype cluster cell indices and clone umis for graph partitions (clonotype clusters)
         idx, values, clone_chain_indices, umi_counts = zip(
@@ -383,9 +369,7 @@ def define_clonotype_clusters(
         target_size = max(ak.max(ak.num(params.airr)), 1)
         # initialize a numpy array to hold clone ids (-2 where cell has a clone and -1 otherwise)
         clone_ids = ak.fill_none(  # pylint: disable=no-member
-            ak.pad_none(
-                ak.full_like(params.airr["umi_count"], -2), target_size, axis=1
-            ),
+            ak.pad_none(ak.full_like(params.airr["umi_count"], -2), target_size, axis=1),
             -1,
         ).to_numpy()
         # map obs names to indices, fwd and reverse
@@ -402,14 +386,10 @@ def define_clonotype_clusters(
         _clone_ids = np.asarray(values, dtype=np.int64)
         chain_indices = params.chain_indices[ctn.receptor_arms]
         # map the clone ids to their cell chains
-        for obs, chain, vals in zip(
-            obs_inds, _clone_chain_indices, _clone_ids, strict=True
-        ):
+        for obs, chain, vals in zip(obs_inds, _clone_chain_indices, _clone_ids, strict=True):
             clone_ids[obs, chain_indices[obs][chain]] = vals
         # will convert none to na on ak.from_numpy
-        clone_ids = ak.from_numpy(
-            np.where(clone_ids == -2, None, clone_ids).astype(float)
-        )
+        clone_ids = ak.from_numpy(np.where(clone_ids == -2, None, clone_ids).astype(float))
         # drop invalid chains, convert to int (use -1 b/c ak throws a warning with None values)
         clone_ids_int = ak.values_astype(
             ak.nan_to_num(ak.drop_none(ak.mask(clone_ids, clone_ids != -1)), nan=-1),
@@ -435,12 +415,8 @@ def define_clonotype_clusters(
             .to_numpy()
         )  # may want sparse in the future
         # keep the clone chain indices and umi counts-> may remove in the future
-        clonotype_distance_res["clone_chain_indices"] = json.dumps(
-            ctn.clone_chain_data["chain_index"]
-        )
-        clonotype_distance_res["clone_umi_count"] = json.dumps(
-            ctn.clone_chain_data["umi_count"]
-        )
+        clonotype_distance_res["clone_chain_indices"] = json.dumps(ctn.clone_chain_data["chain_index"])
+        clonotype_distance_res["clone_umi_count"] = json.dumps(ctn.clone_chain_data["umi_count"])
 
     # Return or store results
 
@@ -617,9 +593,7 @@ def clonotype_network(
     """
     params = DataHandler(adata, airr_mod)
     if size_aware and layout != "components":
-        raise ValueError(
-            "The `size_aware` option is only compatible with the `components` layout."
-        )
+        raise ValueError("The `size_aware` option is only compatible with the `components` layout.")
     params_dict = {}
     random.seed(random_state)
     np.random.seed(random_state)
@@ -638,9 +612,7 @@ def clonotype_network(
             "or `tl.define_clonotype_clusters`, respectively?"
         ) from None
 
-    graph = igraph_from_sparse_matrix(
-        clonotype_res["distances"], matrix_type="distance"
-    )
+    graph = igraph_from_sparse_matrix(clonotype_res["distances"], matrix_type="distance")
 
     if base_size is None:
         base_size = 240000 / len(graph.vs)
@@ -661,13 +633,9 @@ def clonotype_network(
         elif isinstance(mask_obs, np.ndarray) and mask_obs.dtype == np.bool_:
             cell_mask = mask_obs
         else:
-            raise TypeError(
-                f"mask_obs should be either a string or a boolean NumPy array, but got {type(mask_obs)}"
-            )
+            raise TypeError(f"mask_obs should be either a string or a boolean NumPy array, but got {type(mask_obs)}")
 
-        cell_indices_reversed = {
-            v: k for k, values in cell_indices.items() for v in values
-        }
+        cell_indices_reversed = {v: k for k, values in cell_indices.items() for v in values}
         clonotype_mask = np.zeros((len(cell_indices),), dtype=bool)
         cell_index_filter = adata.obs.loc[cell_mask].index
         for cell_index in cell_index_filter:
@@ -682,23 +650,15 @@ def clonotype_network(
     # create component_mask
     component_node_count = np.array([len(component.vs) for component in components])
     component_sizes = np.array([sum(component.vs["size"]) for component in components])
-    component_mask = (component_node_count >= min_nodes) & (
-        component_sizes >= min_cells
-    )
+    component_mask = (component_node_count >= min_nodes) & (component_sizes >= min_cells)
 
     # adapt component_mask according to clonotype_mask
     if mask_obs is not None:
-        component_filter = np.array(
-            [any(component.vs["clonotype_mask"]) for component in components]
-        )
+        component_filter = np.array([any(component.vs["clonotype_mask"]) for component in components])
         component_mask = component_mask & component_filter
 
     # Filter subgraph by `min_cells` and `min_nodes`
-    subgraph_idx = list(
-        itertools.chain.from_iterable(
-            comp.vs["node_id"] for comp in components[component_mask]
-        )
-    )
+    subgraph_idx = list(itertools.chain.from_iterable(comp.vs["node_id"] for comp in components[component_mask]))
 
     if len(subgraph_idx) == 0:
         raise ValueError(f"No subgraphs with size >= {min_cells} found.")
@@ -735,9 +695,7 @@ def clonotype_network(
         ),
         strict=False,
     )
-    coord_df = pd.DataFrame(data=coords, index=idx, columns=["x", "y"]).reindex(
-        params.adata.obs_names
-    )
+    coord_df = pd.DataFrame(data=coords, index=idx, columns=["x", "y"]).reindex(params.adata.obs_names)
 
     # Store results or return
     if inplace:
@@ -750,9 +708,7 @@ def clonotype_network(
         return coord_df
 
 
-def _graph_from_coordinates(
-    adata: AnnData, clonotype_key: str, basis: str
-) -> tuple[pd.DataFrame, sp.csr_matrix]:
+def _graph_from_coordinates(adata: AnnData, clonotype_key: str, basis: str) -> tuple[pd.DataFrame, sp.csr_matrix]:
     """
     Given an AnnData object on which `tl.clonotype_network` was ran, and
     the corresponding `clonotype_key`, extract a data-frame
@@ -764,15 +720,11 @@ def _graph_from_coordinates(
     # map the cell-id to the corresponding row/col in the clonotype distance matrix
     cell_indices = read_cell_indices(clonotype_res["cell_indices"])
     dist_idx, obs_names = zip(
-        *itertools.chain.from_iterable(
-            zip(itertools.repeat(i), obs_names) for i, obs_names in cell_indices.items()
-        ),
+        *itertools.chain.from_iterable(zip(itertools.repeat(i), obs_names) for i, obs_names in cell_indices.items()),
         strict=False,
     )
     dist_idx_lookup = pd.DataFrame(index=obs_names, data=dist_idx, columns=["dist_idx"])
-    clonotype_label_lookup = adata.obs.loc[:, [clonotype_key]].rename(
-        columns={clonotype_key: "label"}
-    )
+    clonotype_label_lookup = adata.obs.loc[:, [clonotype_key]].rename(columns={clonotype_key: "label"})
 
     # Retrieve coordinates and reduce them to one coordinate per node
     coords = (
@@ -826,13 +778,9 @@ def clonotype_network_igraph(
     try:
         clonotype_key = params.adata.uns[basis]["clonotype_key"]
     except KeyError:
-        raise KeyError(
-            f"{basis} not found in `adata.uns`. Did you run `tl.clonotype_network`?"
-        ) from None
+        raise KeyError(f"{basis} not found in `adata.uns`. Did you run `tl.clonotype_network`?") from None
     if f"X_{basis}" not in params.adata.obsm_keys():
-        raise KeyError(
-            f"X_{basis} not found in `adata.obsm`. Did you run `tl.clonotype_network`?"
-        )
+        raise KeyError(f"X_{basis} not found in `adata.obsm`. Did you run `tl.clonotype_network`?")
     coords, adj_mat = _graph_from_coordinates(params.adata, clonotype_key, basis)
 
     graph = igraph_from_sparse_matrix(adj_mat, matrix_type="distance")

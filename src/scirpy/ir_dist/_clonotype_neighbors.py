@@ -9,7 +9,7 @@ from scanpy import logging
 
 from scirpy.get import _has_ir
 from scirpy.get import airr as get_airr
-from scirpy.util import DataHandler, SCIRPY_DUAL_IR_MODEL
+from scirpy.util import SCIRPY_DUAL_IR_MODEL, DataHandler
 
 from ._util import DoubleLookupNeighborFinder, _merge_receptor_types
 
@@ -52,10 +52,10 @@ class ClonotypeNeighbors:
         self.cell_indices, self.clone_chain_data, self.clonotypes = self._make_clonotype_table(params)
         self._chain_count = self._make_chain_count(self.clonotypes)
         if params2 is not None:
-            self.cell_indices2, self.clonotypes2 = self._make_clonotype_table(params2)
+            self.cell_indices2, self.clone_chain_data2, self.clonotypes2 = self._make_clonotype_table(params2)
             self._chain_count2 = self._make_chain_count(self.clonotypes2)
         else:
-            self.cell_indices2, self.clonotypes2, self._chain_count2 = None, None, None
+            self.cell_indices2, self.clone_chain_data2, self.clonotypes2, self._chain_count2 = None, None, None, None
 
         self.neighbor_finder = DoubleLookupNeighborFinder(self.clonotypes, self.clonotypes2)
         self._add_distance_matrices()
