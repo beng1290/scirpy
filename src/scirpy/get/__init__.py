@@ -34,7 +34,7 @@ def airr(
         If multiple values are specified, a dataframe will be returned.
     chain
         choose the recptor arm (VJ/VDJ) and if you want to retrieve the primary or secondary chain.
-        If multiple chains are specified, a adataframe will be returned
+        If multiple chains are specified, a dataframe will be returned
     {airr_mod}
     {airr_key}
     {chain_idx_key}

@@ -119,6 +119,9 @@ class DataHandler:
                 f"No chain indices found under adata.obsm['{self._chain_idx_key}']. "
                 "Running scirpy.pp.index_chains with default parameters. ",
             )
+            # adding model as input would require changing the signature of DataHandler which would
+            # require changing all public functions that use it. For now, we just run with the default
+            # model.
 
             index_chains(self.adata, airr_key=self._airr_key, key_added=self._chain_idx_key)
 
@@ -215,6 +218,8 @@ class DataHandler:
         """Get the scirpy model that was used to define chain indices."""
         # could check if the model is valid here
         if self._chain_idx_key is not None:
+            if "model" not in self.adata.uns[self._chain_idx_key]:
+                return SCIRPY_DUAL_IR_MODEL # backwards compatibility
             return self.adata.uns[self._chain_idx_key]["model"]
         raise AttributeError("DataHandler was initialized without chain indices.")
 
