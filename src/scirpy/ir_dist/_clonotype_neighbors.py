@@ -9,9 +9,9 @@ from scanpy import logging
 
 from scirpy.get import _has_ir
 from scirpy.get import airr as get_airr
-from scirpy.util import DataHandler
+from scirpy.util import SCIRPY_DUAL_IR_MODEL, DataHandler
 
-from ._util import DoubleLookupNeighborFinder
+from ._util import DoubleLookupNeighborFinder, _merge_receptor_types
 
 
 class ClonotypeNeighbors:
@@ -49,13 +49,13 @@ class ClonotypeNeighbors:
         # Initialize the DoubleLookupNeighborFinder and all lookup tables
         start = logging.info("Initializing lookup tables. ")  # type: ignore
 
-        self.cell_indices, self.clonotypes = self._make_clonotype_table(params)
+        self.cell_indices, self.clone_chain_data, self.clonotypes = self._make_clonotype_table(params)
         self._chain_count = self._make_chain_count(self.clonotypes)
         if params2 is not None:
-            self.cell_indices2, self.clonotypes2 = self._make_clonotype_table(params2)
+            self.cell_indices2, self.clone_chain_data2, self.clonotypes2 = self._make_clonotype_table(params2)
             self._chain_count2 = self._make_chain_count(self.clonotypes2)
         else:
-            self.cell_indices2, self.clonotypes2, self._chain_count2 = None, None, None
+            self.cell_indices2, self.clone_chain_data2, self.clonotypes2, self._chain_count2 = None, None, None, None
 
         self.neighbor_finder = DoubleLookupNeighborFinder(self.clonotypes, self.clonotypes2)
         self._add_distance_matrices()
@@ -76,16 +76,84 @@ class ClonotypeNeighbors:
             airr_variables.append("j_call")
 
         chains = [f"{arm}_{chain}" for arm, chain in itertools.product(self._receptor_arm_cols, self._dual_ir_cols)]
+        # append match_columns to airr_variables if scirpy multi chain model
+        if params.model != SCIRPY_DUAL_IR_MODEL:
+            if self.match_columns is not None:
+                airr_variables += self.match_columns
+            airr_variables.append("umi_count")
+            if self._dual_ir_cols == ["1", "2"]:
+                chains = [f"{arm}_{cid}" for arm in self._receptor_arm_cols for cid in params.chain_ids[arm]]
 
         obs = get_airr(params, airr_variables, chains)
         # remove entries without receptor (e.g. only non-productive chains) or no sequences
         obs = obs.loc[_has_ir(params) & np.any(~pd.isnull(obs), axis=1), :]
-        if self.match_columns is not None:
+        if params.model == SCIRPY_DUAL_IR_MODEL and self.match_columns is not None:
             obs = obs.join(
                 params.get_obs(self.match_columns),
                 validate="one_to_one",
                 how="inner",
             )
+
+        if params.model != SCIRPY_DUAL_IR_MODEL:
+            # for multiple chains merge the chains into a single entry
+            if self._dual_ir_cols == ["1", "2"]:
+                #
+                self._dual_ir_cols = ["1"]
+                self.dual_ir = "primary_only"
+                if len(self._receptor_arm_cols) == 2:
+                    max_chains = max(len(params.chain_ids["VJ"]), len(params.chain_ids["VDJ"]))
+                else:
+                    max_chains = len(params.chain_ids[self._receptor_arm_cols[0]])
+                dfs = []
+                #
+                for i in range(1, max_chains + 1):
+                    cols_exist = [col for col in obs.columns.tolist() if f"VJ_{i}_" in col or f"VDJ_{i}_" in col]
+                    df = obs.loc[:, cols_exist]
+                    df.columns = [col.replace(f"VJ_{i}", "VJ_1").replace(f"VDJ_{i}", "VDJ_1") for col in cols_exist]
+                    df = df.dropna(how="all")
+                    df["chain_index"] = str(i)
+                    dfs.append(df)
+                obs = pd.concat(dfs, axis=0)
+
+            if len(self._receptor_arm_cols) == 2:
+                # combine the umi_counts of chains if both chains are to be considered
+                obs["umi_count"] = obs["VJ_1_umi_count"].infer_objects(False).fillna(0) + obs[
+                    "VDJ_1_umi_count"
+                ].infer_objects(False).fillna(0)
+                obs.drop(columns=["VJ_1_umi_count", "VDJ_1_umi_count"], inplace=True)
+
+                # bind match columns into single columns, if multiple receptor arms
+                # for receptor types, if the columns dont match we make new rows
+                # for other match columns they are concatenated with '+' only if both exist
+                if self.match_columns is not None:
+                    if "receptor_type" in self.match_columns:
+                        obs = _merge_receptor_types(obs)
+                    for col in self.match_columns:
+                        if col == "receptor_type":
+                            continue
+                        obs[self.match_columns] = obs.apply(
+                            lambda row, vj_col=f"VJ_1_{col}", vdj_col=f"VDJ_1_{col}": row[vj_col] + "+" + row[vdj_col]
+                            if pd.notna(row[vj_col]) and pd.notna(row[vdj_col])
+                            else row[vj_col]
+                            if pd.notna(row[vj_col])
+                            else row[vdj_col]
+                            if pd.notna(row[vj_col])
+                            else None,
+                            axis=1,
+                        )
+                        obs.drop(columns=[f"VJ_1_{col}", f"VDJ_1_{col}"], inplace=True)
+
+            else:
+                combine_columns = ["umi_count"]
+                # update the match column name, if single receptor arm
+                if self.match_columns is not None:
+                    combine_columns += self.match_columns
+                cols = {}
+                for col in combine_columns:
+                    cols[f"{self._receptor_arm_cols[0]}_1_{col}"] = col
+                obs.rename(columns=cols, inplace=True)
+            # needs to be string dtype for dictionary embedding
+            obs["umi_count"] = obs["umi_count"].astype(str)
 
         # Converting nans to str("nan"), as we want string dtype
         for col in obs.columns:
@@ -94,8 +162,11 @@ class ClonotypeNeighbors:
             obs.loc[pd.isnull(obs[col]), col] = "nan"  # type: ignore
             obs[col] = obs[col].astype(str)  # type: ignore
 
+        # don't include chain index or umi count in grouping
+        cols = [col for col in obs.columns.tolist() if col not in ("chain_index", "umi_count")]
+
         # using groupby instead of drop_duplicates since we need the group indices below
-        clonotype_groupby = obs.groupby(obs.columns.tolist(), sort=False, observed=True)
+        clonotype_groupby = obs.groupby(cols, sort=False, observed=True)
         # This only gets the unique_values (the groupby index)
         clonotypes = clonotype_groupby.size().index.to_frame(index=False)
 
@@ -113,15 +184,22 @@ class ClonotypeNeighbors:
         # implicitly.
         cell_indices = {
             str(i): obs.index[
-                clonotype_groupby.indices.get(
-                    # indices is not a tuple if it's just a single column.
-                    ct_tuple[0] if len(ct_tuple) == 1 else ct_tuple,
-                    [],
-                )
+                # indices is not a tuple if it's just a single column.
+                clonotype_groupby.indices.get(ct_tuple[0] if len(ct_tuple) == 1 else ct_tuple, [])
             ].values.tolist()
             for i, ct_tuple in enumerate(clonotypes.itertuples(index=False, name=None))
         }
-
+        #
+        clone_chain_data = {
+            k: {
+                str(i): obs[k]
+                .iloc[clonotype_groupby.indices.get(ct_tuple[0] if len(ct_tuple) == 1 else ct_tuple, [])]
+                .values.tolist()
+                for i, ct_tuple in enumerate(clonotypes.itertuples(index=False, name=None))
+            }
+            for k in ("chain_index", "umi_count")
+            if k in obs.columns
+        }
         # make 'within group' a single column of tuples (-> only one distance
         # matrix instead of one per column.)
         if self.match_columns is not None:
@@ -140,7 +218,7 @@ class ClonotypeNeighbors:
                     "There must not be a secondary chain if there is no primary one"
                 )
 
-        return cell_indices, clonotypes
+        return cell_indices, clone_chain_data, clonotypes
 
     def _add_distance_matrices(self) -> None:
         """Add all required distance matrices to the DoubleLookupNeighborFinder"""

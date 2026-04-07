@@ -92,6 +92,54 @@ def reduce_and(*args, chain_count):
         return tmp_array
 
 
+def _merge_receptor_types(df):
+    """
+    Merges VJ_1_receptor_type and VDJ_1_receptor_type into a single column.
+    If they do not match, splits the row into two separate rows.
+
+    Parameters
+    ----------
+    df
+        Input dataframe with VJ_1 and VDJ_1 columns.
+
+    Returns
+    -------
+    Transformed dataframe with merged receptor types.
+    """
+    # Identify relevant columns dynamically
+    cols_vj = [col for col in df.columns if "VJ_1" in col]
+    cols_vdj = [col for col in df.columns if "VDJ_1" in col]
+
+    # Identify rows where receptor types match or one is None
+    match_condition = (
+        (df["VJ_1_receptor_type"] == df["VDJ_1_receptor_type"])
+        | df["VJ_1_receptor_type"].isna()
+        | df["VDJ_1_receptor_type"].isna()
+    )
+
+    # Keep rows where receptor types match or one is None
+    df_matched = df[match_condition].copy()
+    df_matched["receptor_type"] = df_matched["VJ_1_receptor_type"].combine_first(df_matched["VDJ_1_receptor_type"])
+
+    # Identify rows where receptor types do not match
+    df_unmatched = df[~match_condition].copy()
+
+    # Create two new dataframes, one for VJ_1 and another for VDJ_1
+    df_vj = df_unmatched.copy()
+    df_vj["receptor_type"] = df_vj["VJ_1_receptor_type"]
+    df_vj[cols_vdj] = None  # Drop VDJ columns
+
+    df_vdj = df_unmatched.copy()
+    df_vdj["receptor_type"] = df_vdj["VDJ_1_receptor_type"]
+    df_vdj[cols_vj] = None  # Drop VJ columns
+
+    # Combine all data
+    final_df = pd.concat([df_matched, df_vj, df_vdj], ignore_index=False)
+
+    # Drop old receptor type columns
+    return final_df.drop(columns=["VJ_1_receptor_type", "VDJ_1_receptor_type"])
+
+
 class ReverseLookupTable:
     def __init__(self, dist_type: Literal["boolean", "numeric"], size: int, dist_mat: np.ndarray | sp.csr_matrix):
         """Reverse lookup table holds a mask that indicates which objects

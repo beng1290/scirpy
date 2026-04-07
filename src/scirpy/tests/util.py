@@ -8,6 +8,7 @@ from anndata import AnnData
 from mudata import MuData
 
 from scirpy.io import AirrCell
+from scirpy.pp._index_chains import SCIRPY_DUAL_IR_MODEL
 from scirpy.util import _is_na, _is_na2
 
 
@@ -108,7 +109,7 @@ def _make_adata(obs: pd.DataFrame, mudata: bool = False) -> AnnData | MuData:
         X=None,
         obs=obs.loc[:, ~obs.columns.isin(cols)].copy(),  # type:ignore
         obsm={"chain_indices": chain_indices, "airr": airr_data},  # type:ignore
-        uns={"scirpy_version": version("scirpy")},
+        uns={"scirpy_version": version("scirpy"), "chain_indices": {"model": SCIRPY_DUAL_IR_MODEL}},
     )
     adata.strings_to_categoricals()
     if mudata:

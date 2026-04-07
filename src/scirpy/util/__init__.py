@@ -3,7 +3,7 @@ import os
 import warnings
 from collections.abc import Callable, Sequence
 from textwrap import dedent
-from typing import Any, Union, cast, overload
+from typing import Any, Literal, Union, cast, overload
 
 import awkward as ak
 import numpy as np
@@ -18,6 +18,12 @@ from tqdm.auto import tqdm
 
 # reexport tqdm (here was previously a workaround for https://github.com/tqdm/tqdm/issues/1082)
 __all__ = ["tqdm"]
+
+SCIRPY_DUAL_IR_MODEL = "scirpy_dual_ir_v0.13"
+SCIRPY_MULTI_IR_MODEL = "scirpy_multi_ir_v0.13_beta"
+SCIRPY_MODELS = {"dual": SCIRPY_DUAL_IR_MODEL, "multi": SCIRPY_MULTI_IR_MODEL}
+_VALID_DUAL_CHAINS = ["VJ_1", "VJ_2", "VDJ_1", "VDJ_2"]
+ChainType = Literal["VJ_1", "VJ_2", "VDJ_1", "VDJ_2"]
 
 
 def _doc_params(**kwds):
@@ -91,7 +97,6 @@ class DataHandler:
             self._airr_mod = airr_mod
             self._airr_key = airr_key
             self._chain_idx_key = chain_idx_key
-
         # check for outdated schema
         self._check_airr_key_in_obsm()
         self._check_chain_indices()
@@ -114,6 +119,9 @@ class DataHandler:
                 f"No chain indices found under adata.obsm['{self._chain_idx_key}']. "
                 "Running scirpy.pp.index_chains with default parameters. ",
             )
+            # adding model as input would require changing the signature of DataHandler which would
+            # require changing all public functions that use it. For now, we just run with the default
+            # model.
 
             index_chains(self.adata, airr_key=self._airr_key, key_added=self._chain_idx_key)
 
@@ -203,16 +211,51 @@ class DataHandler:
         """
         if self._chain_idx_key is not None:
             return cast(ak.Array, self.adata.obsm[self._chain_idx_key])
-        else:
+        raise AttributeError("DataHandler was initialized without chain indices.")
+
+    @property
+    def model(self) -> str:
+        """Get the scirpy model that was used to define chain indices."""
+        # could check if the model is valid here
+        if self._chain_idx_key is not None:
+            if "model" not in self.adata.uns[self._chain_idx_key]:
+                return SCIRPY_DUAL_IR_MODEL # backwards compatibility
+            return self.adata.uns[self._chain_idx_key]["model"]
+        raise AttributeError("DataHandler was initialized without chain indices.")
+
+    @property
+    def chain_ids(self) -> dict[str, list[str]]:
+        """A list of chain ids for VJ and VDJ chains."""
+        if self._chain_idx_key is None:
             raise AttributeError("DataHandler was initialized without chain indices.")
+        if self.model == SCIRPY_DUAL_IR_MODEL:
+            return {"VJ": ["1", "2"], "VDJ": ["1", "2"]}
+        else:  # SCIRPY_MULTI_IR_MODEL
+            return {
+                arm: [str(chain) for chain in range(1, np.max(ak.num(self.chain_indices[arm])) + 1)]
+                for arm in ["VJ", "VDJ"]
+            }
+
+    @property
+    def valid_chains(self) -> list[str]:  # might not need this one
+        """Get the valid chains that are available in the chain indices."""
+        if self._chain_idx_key is None:
+            raise AttributeError("DataHandler was initialized without chain indices.")
+        if self.model == SCIRPY_DUAL_IR_MODEL:
+            return _VALID_DUAL_CHAINS
+        else:  # SCIRPY_MULTI_IR_MODEL
+            return [
+                f"{arm}_{chain}"
+                for arm in ["VJ", "VDJ"]
+                for chain in range(1, np.max(ak.num(self.chain_indices[arm])) + 1)
+            ]
 
     @property
     def airr(self) -> ak.Array:
         """Reference to the awkward array with AIRR information."""
         if self._airr_key is not None:
             return cast(ak.Array, self.adata.obsm[self._airr_key])
-        else:
-            raise AttributeError("DataHandler was initialized wihtout airr information")
+        raise AttributeError("DataHandler was initialized without airr information")
 
     @property
     def adata(self) -> AnnData:
@@ -292,6 +335,12 @@ class DataHandler:
                 Key under which the chain indices are stored in adata.obsm.
                 If chain indices are not present, :func:`~scirpy.pp.index_chains` is
                 run with default parameters.
+            """
+        )
+        doc["model"] = dedent(
+            """\
+            model
+                Model that chain indices was run with.
             """
         )
         doc["inplace"] = dedent(

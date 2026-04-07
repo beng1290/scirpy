@@ -10,21 +10,19 @@ from anndata import AnnData
 from mudata import MuData
 from pandas.api.extensions import ExtensionArray
 
-from scirpy.util import DataHandler
-
-_VALID_CHAINS = ["VJ_1", "VJ_2", "VDJ_1", "VDJ_2"]
-ChainType = Literal["VJ_1", "VJ_2", "VDJ_1", "VDJ_2"]
+from scirpy.util import ChainType, DataHandler
 
 
 @DataHandler.inject_param_docs()
 def airr(
     adata: DataHandler.TYPE,
     airr_variable: str | Sequence[str],
-    chain: ChainType | Sequence[ChainType] = ("VJ_1", "VDJ_1", "VJ_2", "VDJ_2"),
+    chain: ChainType | Sequence[ChainType] | Literal["all"] = "all",
     *,
     airr_mod: str = "airr",
     airr_key: str = "airr",
     chain_idx_key: str = "chain_indices",
+    _valid_chains: Sequence[ChainType] | None = None,
 ) -> pd.DataFrame | pd.Series:
     """\
     Retrieve AIRR variables for each cell, given a specific chain.
@@ -37,10 +35,14 @@ def airr(
         If multiple values are specified, a dataframe will be returned.
     chain
         choose the recptor arm (VJ/VDJ) and if you want to retrieve the primary or secondary chain.
-        If multiple chains are specified, a adataframe will be returned
+        If multiple chains are specified, a dataframe will be returned
     {airr_mod}
     {airr_key}
     {chain_idx_key}
+    _valid_chains
+        If specified, only these chains will be considered. If not specified, all chains in the data will be
+        considered. This avoids having to recompute the valid chains for each call to this function. For example,
+        in `ir_dist` where there are multiple calls to `airr`.
 
     Returns
     -------
@@ -49,8 +51,17 @@ def airr(
     """
     params = DataHandler(adata, airr_mod, airr_key, chain_idx_key)
     multiple_vars = not isinstance(airr_variable, str)
+    _valid_chains = _valid_chains if _valid_chains is not None else params.valid_chains
+    chain = _valid_chains if isinstance(chain, str) and chain == "all" else chain
     multiple_chains = not isinstance(chain, str)
 
+    # seems a bit complicated why not just do:
+    #
+    # result_new = airr[chains[:, receptor_arm], airr_variables][:, chain_i]
+    # result_table = (
+    #   ak.to_arrow_table(result_new, extensionarray=False).to_pandas().set_index(index)
+    # )
+    #
     if multiple_vars or multiple_chains:
         if not multiple_vars:
             airr_variable = [airr_variable]
@@ -63,16 +74,16 @@ def airr(
                     params.chain_indices,
                     tmp_var,
                     cast(ChainType, tmp_chain),
+                    _valid_chains,
                 )
                 for tmp_chain, tmp_var in itertools.product(chain, airr_variable)
             },
             index=params.adata.obs_names,
         )
-    else:
-        return pd.Series(
-            _airr_col(params.airr, params.chain_indices, airr_variable, cast(ChainType, chain)),
-            index=params.adata.obs_names,
-        )
+    return pd.Series(
+        _airr_col(params.airr, params.chain_indices, airr_variable, cast(ChainType, chain), _valid_chains),
+        index=params.adata.obs_names,
+    )
 
 
 def _airr_col(
@@ -80,11 +91,12 @@ def _airr_col(
     chain_indices: ak.Array,
     airr_variable: str,
     chain: ChainType,
+    valid_chains: Sequence[ChainType],
 ) -> np.ndarray | pd.api.extensions.ExtensionArray:
     """Called by `airr()` to retrieve a single column"""
     chain = chain.upper()  # type: ignore
-    if chain not in _VALID_CHAINS:
-        raise ValueError(f"Invalid value for chain. Valid values are {', '.join(_VALID_CHAINS)}")
+    if chain not in valid_chains:
+        raise ValueError(f"Invalid value for chain. Valid values are {', '.join(valid_chains)}")
 
     # split VJ_1 into ("VJ", 0)
     receptor_arm, chain_i = chain.split("_")

@@ -4,6 +4,7 @@ import random
 from collections.abc import Sequence
 from typing import Literal, cast
 
+import awkward as ak
 import igraph as ig
 import numpy as np
 import pandas as pd
@@ -14,7 +15,7 @@ from scanpy import logging
 from scirpy.ir_dist import MetricType, _get_metric_key
 from scirpy.ir_dist._clonotype_neighbors import ClonotypeNeighbors
 from scirpy.pp import ir_dist
-from scirpy.util import DataHandler, read_cell_indices
+from scirpy.util import SCIRPY_DUAL_IR_MODEL, DataHandler, read_cell_indices
 from scirpy.util.graph import igraph_from_sparse_matrix, layout_components
 
 _common_doc = """\
@@ -158,13 +159,20 @@ def _validate_parameters(
         if isinstance(within_group, str):
             within_group = [within_group]
         for group_col in within_group:
-            try:
-                params.get_obs(group_col)
-            except KeyError:
-                msg = f"column `{group_col}` not found in `obs`. "
-                if group_col in ("receptor_type", "receptor_subtype"):
-                    msg += "Did you run `tl.chain_qc`? "
-                raise ValueError(msg) from None
+            if params.model == SCIRPY_DUAL_IR_MODEL:
+                try:
+                    params.get_obs(group_col)
+                except KeyError:
+                    msg = f"column `{group_col}` not found in `obs`. "
+                    if group_col in ("receptor_type", "receptor_subtype"):
+                        msg += "Did you run `tl.chain_qc`? "
+                    raise ValueError(msg) from None
+            else:
+                if group_col not in ak.fields(params.airr):
+                    raise ValueError(
+                        f"column `{group_col}` not found in `airr`. "
+                        "for multi chain model group columns must be in `airr` fields."
+                    )
 
     if distance_key is None:
         if reference is not None:
@@ -173,7 +181,6 @@ def _validate_parameters(
             distance_key = f"ir_dist_{sequence}_{_get_metric_key(metric)}"
     if distance_key not in params.adata.uns:
         raise ValueError("Sequence distances were not found in `adata.uns`. Did you run `pp.ir_dist`?")
-
     if key_added is None:
         if reference is not None:
             key_added = f"ir_query_{_get_db_name()}_{sequence}_{_get_metric_key(metric)}"
@@ -322,25 +329,104 @@ def define_clonotype_clusters(
     clonotype_cluster_series = pd.Series(data=None, index=params.adata.obs_names, dtype=str)
     clonotype_cluster_size_series = pd.Series(data=None, index=params.adata.obs_names, dtype=int)
 
-    # clonotype cluster = graph partition
-    idx, values = zip(
-        *itertools.chain.from_iterable(
-            zip(ctn.cell_indices[str(ct_id)], itertools.repeat(str(clonotype_cluster)))
-            for ct_id, clonotype_cluster in enumerate(part.membership)
-        ),
-        strict=False,
-    )
-    clonotype_cluster_series = pd.Series(values, index=idx).reindex(params.adata.obs_names)
-    clonotype_cluster_size_series = clonotype_cluster_series.groupby(clonotype_cluster_series).transform("count")
-
-    # Return or store results
+    #
     clonotype_distance_res = {
         "distances": clonotype_dist,
         "cell_indices": json.dumps(ctn.cell_indices),
     }
+    #
+    if params.model == SCIRPY_DUAL_IR_MODEL:
+        # unpack clonotype cluster cell indices for graph partitions (clonotype clusters)
+        idx, values = zip(
+            *itertools.chain.from_iterable(
+                zip(
+                    ctn.cell_indices[str(ct_id)],
+                    itertools.repeat(str(clonotype_cluster)),
+                )
+                for ct_id, clonotype_cluster in enumerate(part.membership)
+            ),
+            strict=False,
+        )
+        clonotype_cluster_series = pd.Series(values, index=idx).reindex(params.adata.obs_names)
+        clonotype_cluster_size_series = clonotype_cluster_series.groupby(clonotype_cluster_series).transform("count")
+    else:
+        # unpack clonotype cluster cell indices and clone umis for graph partitions (clonotype clusters)
+        idx, values, clone_chain_indices, umi_counts = zip(
+            *itertools.chain.from_iterable(
+                zip(
+                    ctn.cell_indices[str(ct_id)],
+                    itertools.repeat(str(clonotype_cluster)),
+                    ctn.clone_chain_data["chain_index"][str(ct_id)],
+                    ctn.clone_chain_data["umi_count"][str(ct_id)],
+                )
+                for ct_id, clonotype_cluster in enumerate(part.membership)
+            ),
+            strict=False,
+        )
+        # map the clone ids to their cell chains
+        #
+        # get the max number of chains per cell
+        target_size = max(ak.max(ak.num(params.airr)), 1)
+        # initialize a numpy array to hold clone ids (-2 where cell has a clone and -1 otherwise)
+        clone_ids = ak.fill_none(  # pylint: disable=no-member
+            ak.pad_none(ak.full_like(params.airr["umi_count"], -2), target_size, axis=1),
+            -1,
+        ).to_numpy()
+        # map obs names to indices, fwd and reverse
+        obs_name_to_idx = {obs: i for i, obs in enumerate(params.adata.obs_names)}
+        obs_inds = np.array([obs_name_to_idx.get(ind, -1) for ind in idx])
+        # cells without clones for this clustering get -1
+        # empty_ = np.array(
+        #    [0 if key in idx else 1 for key, i in obs_name_to_idx.items()]
+        # )
+        # clone_ids[empty_ == 1, :] = -1
+        clone_ids = np.asarray(clone_ids)
+        #
+        _clone_chain_indices = np.asarray(clone_chain_indices, dtype=np.int64) - 1
+        _clone_ids = np.asarray(values, dtype=np.int64)
+        chain_indices = params.chain_indices[ctn.receptor_arms]
+        # map the clone ids to their cell chains
+        for obs, chain, vals in zip(obs_inds, _clone_chain_indices, _clone_ids, strict=True):
+            clone_ids[obs, chain_indices[obs][chain]] = vals
+        # will convert none to na on ak.from_numpy
+        clone_ids = ak.from_numpy(np.where(clone_ids == -2, None, clone_ids).astype(float))
+        # drop invalid chains, convert to int (use -1 b/c ak throws a warning with None values)
+        clone_ids_int = ak.values_astype(
+            ak.nan_to_num(ak.drop_none(ak.mask(clone_ids, clone_ids != -1)), nan=-1),
+            np.int64,
+            including_unknown=True,
+        )
+        # second pass to ensure -1 are masked as None and type is correct
+        clonotype_cluster_series = ak.mask(clone_ids_int, clone_ids_int != -1)
+        # in size use the umi counts for clonotype clusters and sum across clonotypes
+        df1 = pd.DataFrame({"clone_id": values, "umi_counts": umi_counts}, index=idx)
+        df1["clone_id"] = df1["clone_id"].astype("int32")
+        df1["umi_counts"] = df1["umi_counts"].astype(float)
+        clonotype_cluster_size_series = (
+            df1.pivot_table(
+                index=df1.index,
+                columns="clone_id",
+                values="umi_counts",
+                fill_value=0,
+                aggfunc="sum",
+            )
+            .reindex(params.adata.obs_names)
+            .fillna(0)
+            .to_numpy()
+        )  # may want sparse in the future
+        # keep the clone chain indices and umi counts-> may remove in the future
+        clonotype_distance_res["clone_chain_indices"] = json.dumps(ctn.clone_chain_data["chain_index"])
+        clonotype_distance_res["clone_umi_count"] = json.dumps(ctn.clone_chain_data["umi_count"])
+
+    # Return or store results
+
     if inplace:
-        params.set_obs(key_added, clonotype_cluster_series)
-        params.set_obs(key_added + "_size", clonotype_cluster_size_series)
+        if params.model == SCIRPY_DUAL_IR_MODEL:
+            params.set_obs(key_added, clonotype_cluster_series)
+            params.set_obs(key_added + "_size", clonotype_cluster_size_series)
+        else:
+            params.adata.obsm[key_added] = clonotype_cluster_series
+            params.adata.obsm[f"{key_added}_size"] = clonotype_cluster_size_series
         params.adata.uns[key_added] = clonotype_distance_res
     else:
         return (
