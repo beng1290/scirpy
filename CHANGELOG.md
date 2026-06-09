@@ -8,12 +8,27 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
-## v0.23.1
+## Unreleased
+
+### Performance improvements
+
+  - Speed up identity distance metric computation for comparisons between two different sequence arrays.
+
+## v0.24.0
+
+### Additions
+
+ - Add the [IggyTop receptor reference database](https://iggytop.readthedocs.io/en/latest/index.html),
+   a metadatabase including receptor data from IEDB, VDJdb and others ([#652](https://github.com/scverse/scirpy/pull/652)). IggyTop includes additional data curation steps (e.g. low quality sequences from 10x dataset filtered out,
+   amino acid sequences are now consistently `junction_aa` sequences). It updated bimonthly, pre-built and can
+   be downloaded from GitHub. This is much faster and more reliable than the previous approach of downloading and building AnnData objects from reference database on-the-fly. The previously existing functions `datasets.iedb` and `datasets.vdjdb` are now wrappers around `datasets.iggytop`.
+
 
 ### Fixes
 
  - Filter unused categories from clonotype network legend ([#680](https://github.com/scverse/scirpy/pull/680/)).
  - Fix overflow error that occured in `ir.pp.ir_dist` with sequences longer than 127 characters ([#683](https://github.com/scverse/scirpy/pull/680))
+ - Remove `distance_key` parameter from `define_clonotypes` and raise warning if it is passed via `kwargs` ([#688](https://github.com/scverse/scirpy/pull/688))
 
 ## v0.23.0
 
