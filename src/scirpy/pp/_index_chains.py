@@ -36,13 +36,7 @@ def index_chains(
     sort_chains_by: Mapping[str, Any] = MappingProxyType(
         # Since AIRR version v1.4.1, `duplicate_count` is deprecated in favor of `umi_count`.
         # We still keep it as sort key for backwards compatibility
-        {
-            "umi_count": 0,
-            "duplicate_count": 0,
-            "consensus_count": 0,
-            "junction": "",
-            "junction_aa": "",
-        }
+        {"umi_count": 0, "duplicate_count": 0, "consensus_count": 0, "junction": "", "junction_aa": ""}
     ),
     airr_mod: str = "airr",
     airr_key: str = "airr",
@@ -129,10 +123,7 @@ def index_chains(
 
     res = {}
     is_multichain = np.zeros(len(airr), dtype=bool)
-    for chain_type, locus_names in {
-        "VJ": AirrCell.VJ_LOCI,
-        "VDJ": AirrCell.VDJ_LOCI,
-    }.items():
+    for chain_type, locus_names in {"VJ": AirrCell.VJ_LOCI, "VDJ": AirrCell.VDJ_LOCI}.items():
         logging.info(f"Indexing {chain_type} chains...")
         # get the indices for all VJ / VDJ chains, respectively
         idx = airr_idx[_awkward_isin(airr["locus"][airr_idx], locus_names)]
@@ -173,8 +164,7 @@ def index_chains(
 
     # store metadata in .uns
     params.adata.uns[key_added] = {
-        # can be used to distinguish different receptor models that may be added in the future.
-        "model": model,
+        "model": model,  # can be used to distinguish different receptor models that may be added in the future.
         "filter": str(filter),
         "airr_key": airr_key,
         "sort_chains_by": str(sort_chains_by),

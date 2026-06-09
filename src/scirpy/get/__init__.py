@@ -57,13 +57,6 @@ def airr(
             for chain in range(1, np.max(ak.num(params.chain_indices[arm])) + 1)
         ]
     multiple_chains = not isinstance(chain, str)
-
-    # seems a bit complicated why not just do:
-    #
-    # result_new = airr[chains[:, receptor_arm], airr_variables][:, chain_i]
-    # result_table = (
-    #   ak.to_arrow_table(result_new, extensionarray=False).to_pandas().set_index(index)
-    # )
     #
     if multiple_vars or multiple_chains:
         if not multiple_vars:

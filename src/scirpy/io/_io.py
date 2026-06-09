@@ -350,17 +350,6 @@ def read_tracer(path: str | Path, **kwargs) -> AnnData:
     return from_airr_cells(airr_cells.values(), **kwargs)
 
 
-def _get_empty_airr_cells(adata, cell_attributes: Collection[str] = DEFAULT_AIRR_CELL_ATTRIBUTES):
-    """Empty dict of AirrCells from adata with cell_id as key"""
-    airr_cells = {}
-    logger = _IOLogger()
-    #
-    for barcode in adata.obs_names:
-        airr_cells[barcode] = AirrCell(cell_id=barcode, logger=logger, cell_attribute_fields=cell_attributes)
-    #
-    return airr_cells
-
-
 @_doc_params(
     doc_working_model=doc_working_model,
     doc_airr_fields=doc_airr_fields,
