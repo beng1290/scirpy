@@ -2,6 +2,7 @@ import itertools
 from collections.abc import Mapping, Sequence
 from typing import Literal
 
+import awkward as ak
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
@@ -62,7 +63,7 @@ class ClonotypeNeighbors:
         self._add_lookup_tables()
         logging.hint("Done initializing lookup tables.", time=start)  # type: ignore
 
-    def _make_clonotype_table(self, params: DataHandler) -> tuple[Mapping, pd.DataFrame]:
+    def _make_clonotype_table(self, params: DataHandler) -> tuple[Mapping, Mapping, pd.DataFrame]:
         """Define 'preliminary' clonotypes based identical IR features."""
         if not params.adata.obs_names.is_unique:
             raise ValueError("Obs names need to be unique!")
@@ -82,7 +83,11 @@ class ClonotypeNeighbors:
                 airr_variables += self.match_columns
             airr_variables.append("umi_count")
             if self._dual_ir_cols == ["1", "2"]:
-                chains = [f"{arm}_{cid}" for arm in self._receptor_arm_cols for cid in params.chain_ids[arm]]
+                chains = [
+                    f"{arm}_{cid}"
+                    for arm in self._receptor_arm_cols
+                    for cid in range(1, np.max(ak.num(params.chain_indices[arm])) + 1)
+                ]
 
         obs = get_airr(params, airr_variables, chains)
         # remove entries without receptor (e.g. only non-productive chains) or no sequences
@@ -100,16 +105,16 @@ class ClonotypeNeighbors:
                 #
                 self._dual_ir_cols = ["1"]
                 self.dual_ir = "primary_only"
-                if len(self._receptor_arm_cols) == 2:
-                    max_chains = max(len(params.chain_ids["VJ"]), len(params.chain_ids["VDJ"]))
-                else:
-                    max_chains = len(params.chain_ids[self._receptor_arm_cols[0]])
+                max_chains = max([np.max(ak.num(params.chain_indices[arm])) for arm in self._receptor_arm_cols]) + 1
                 dfs = []
                 #
-                for i in range(1, max_chains + 1):
+                for i in range(1, max_chains):
                     cols_exist = [col for col in obs.columns.tolist() if f"VJ_{i}_" in col or f"VDJ_{i}_" in col]
                     df = obs.loc[:, cols_exist]
-                    df.columns = [col.replace(f"VJ_{i}", "VJ_1").replace(f"VDJ_{i}", "VDJ_1") for col in cols_exist]
+                    rename_dict = {
+                        col: col.replace(f"VJ_{i}", "VJ_1").replace(f"VDJ_{i}", "VDJ_1") for col in cols_exist
+                    }
+                    df = df.rename(columns=rename_dict)
                     df = df.dropna(how="all")
                     df["chain_index"] = str(i)
                     dfs.append(df)
@@ -131,14 +136,16 @@ class ClonotypeNeighbors:
                     for col in self.match_columns:
                         if col == "receptor_type":
                             continue
-                        obs[self.match_columns] = obs.apply(
-                            lambda row, vj_col=f"VJ_1_{col}", vdj_col=f"VDJ_1_{col}": row[vj_col] + "+" + row[vdj_col]
-                            if pd.notna(row[vj_col]) and pd.notna(row[vdj_col])
-                            else row[vj_col]
-                            if pd.notna(row[vj_col])
-                            else row[vdj_col]
-                            if pd.notna(row[vj_col])
-                            else None,
+                        obs[col] = obs.apply(
+                            lambda row, vj_col=f"VJ_1_{col}", vdj_col=f"VDJ_1_{col}": (
+                                row[vj_col] + "+" + row[vdj_col]
+                                if pd.notna(row[vj_col]) and pd.notna(row[vdj_col])
+                                else row[vj_col]
+                                if pd.notna(row[vj_col])
+                                else row[vdj_col]
+                                if pd.notna(row[vdj_col])
+                                else None
+                            ),
                             axis=1,
                         )
                         obs.drop(columns=[f"VJ_1_{col}", f"VDJ_1_{col}"], inplace=True)

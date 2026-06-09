@@ -22,7 +22,6 @@ def airr(
     airr_mod: str = "airr",
     airr_key: str = "airr",
     chain_idx_key: str = "chain_indices",
-    _valid_chains: Sequence[ChainType] | None = None,
 ) -> pd.DataFrame | pd.Series:
     """\
     Retrieve AIRR variables for each cell, given a specific chain.
@@ -51,8 +50,12 @@ def airr(
     """
     params = DataHandler(adata, airr_mod, airr_key, chain_idx_key)
     multiple_vars = not isinstance(airr_variable, str)
-    _valid_chains = _valid_chains if _valid_chains is not None else params.valid_chains
-    chain = _valid_chains if isinstance(chain, str) and chain == "all" else chain
+    if isinstance(chain, str) and chain == "all":
+        chain = [
+            cast(ChainType, f"{arm}_{chain}")
+            for arm in ["VJ", "VDJ"]
+            for chain in range(1, np.max(ak.num(params.chain_indices[arm])) + 1)
+        ]
     multiple_chains = not isinstance(chain, str)
 
     # seems a bit complicated why not just do:
@@ -74,14 +77,13 @@ def airr(
                     params.chain_indices,
                     tmp_var,
                     cast(ChainType, tmp_chain),
-                    _valid_chains,
                 )
                 for tmp_chain, tmp_var in itertools.product(chain, airr_variable)
             },
             index=params.adata.obs_names,
         )
     return pd.Series(
-        _airr_col(params.airr, params.chain_indices, airr_variable, cast(ChainType, chain), _valid_chains),
+        _airr_col(params.airr, params.chain_indices, airr_variable, cast(ChainType, chain)),
         index=params.adata.obs_names,
     )
 
@@ -91,16 +93,23 @@ def _airr_col(
     chain_indices: ak.Array,
     airr_variable: str,
     chain: ChainType,
-    valid_chains: Sequence[ChainType],
 ) -> np.ndarray | pd.api.extensions.ExtensionArray:
     """Called by `airr()` to retrieve a single column"""
     chain = chain.upper()  # type: ignore
-    if chain not in valid_chains:
+    if not chain.startswith(("VJ_", "VDJ_")):
+        valid_chains = [
+            f"{arm}_{chain}" for arm in ["VJ", "VDJ"] for chain in range(1, np.max(ak.num(chain_indices[arm])) + 1)
+        ]
         raise ValueError(f"Invalid value for chain. Valid values are {', '.join(valid_chains)}")
 
     # split VJ_1 into ("VJ", 0)
     receptor_arm, chain_i = chain.split("_")
     chain_i = int(chain_i) - 1
+    if chain_i < 0 or chain_i > np.max(ak.num(chain_indices[receptor_arm])):
+        valid_chains = [
+            f"{arm}_{chain}" for arm in ["VJ", "VDJ"] for chain in range(1, np.max(ak.num(chain_indices[arm])) + 1)
+        ]
+        raise ValueError(f"Invalid chain index. Valid chains are {', '.join(valid_chains)}")
 
     idx = chain_indices[:, receptor_arm, chain_i]
     mask = ~ak.to_numpy(ak.is_none(idx))
