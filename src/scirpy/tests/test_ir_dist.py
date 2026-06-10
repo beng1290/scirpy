@@ -163,6 +163,50 @@ def test_ir_dist(
     npt.assert_array_equal(res["VDJ"]["distances"].toarray(), expected_dist_vdj)
 
 
+def test_ir_dist_multi_model_uses_all_chain_indices(adata_multichain):
+    ir.pp.ir_dist(adata_multichain, metric="identity", sequence="aa", key_added="ir_dist_aa_identity")
+
+    res = adata_multichain.uns["ir_dist_aa_identity"]
+    npt.assert_array_equal(res["VJ"]["seqs"], np.array(["TRA1", "TRA2", "TRA3", "TRAC"]))
+    npt.assert_array_equal(res["VDJ"]["seqs"], np.array(["TRB1", "TRB2", "TRB3"]))
+    assert res["VJ"]["distances"].shape == (4, 4)
+    assert res["VDJ"]["distances"].shape == (3, 3)
+
+
+def test_clonotype_neighbors_multi_model_flattens_all_chains(adata_multichain):
+    ir.pp.ir_dist(adata_multichain, metric="identity", sequence="aa", key_added="ir_dist_aa_identity")
+
+    cn = ClonotypeNeighbors(
+        DataHandler.default(adata_multichain),
+        receptor_arms="VJ",
+        dual_ir="any",
+        distance_key="ir_dist_aa_identity",
+        sequence_key="junction_aa",
+    )
+
+    assert cn.dual_ir == "primary_only"
+    assert cn.clonotypes.columns.tolist() == ["VJ_1_junction_aa"]
+    assert sorted(cn.clonotypes["VJ_1_junction_aa"].tolist()) == ["TRA1", "TRA2", "TRA3", "TRAC"]
+    assert "3" in set(np.concatenate(list(cn.clone_chain_data["chain_index"].values())))
+    assert "10" in set(np.concatenate(list(cn.clone_chain_data["umi_count"].values())))
+
+
+def test_clonotype_neighbors_multi_model_match_columns_from_airr(adata_multichain):
+    ir.pp.ir_dist(adata_multichain, metric="identity", sequence="aa", key_added="ir_dist_aa_identity")
+
+    cn = ClonotypeNeighbors(
+        DataHandler.default(adata_multichain),
+        receptor_arms="any",
+        dual_ir="any",
+        match_columns=["receptor_type"],
+        distance_key="ir_dist_aa_identity",
+        sequence_key="junction_aa",
+    )
+
+    assert "match_columns" in cn.clonotypes
+    assert set(cn.clonotypes["match_columns"]) == {("TCR",)}
+
+
 @pytest.mark.parametrize("with_adata2", [False, True])
 @pytest.mark.parametrize("joblib_backend", ["loky", "multiprocessing", "threading"])
 @pytest.mark.parametrize("n_jobs", [1, 2])

@@ -59,6 +59,60 @@ def adata_cdr3_2(request):
     return adata
 
 
+@pytest.fixture
+def adata_multichain():
+    # fmt: off
+    obs = pd.DataFrame(
+        [
+            ["cell1", "TRA1", "TRA1nt", 30, True, "TRA", "TCR", "TRA2", "TRA2nt", 20, True, "TRA", "TCR", "TRA3", "TRA3nt", 10, True, "TRA", "TCR", "TRB1", "TRB1nt", 30, True, "TRB", "TCR", "TRB2", "TRB2nt", 20, True, "TRB", "TCR", "TRB3", "TRB3nt", 10, True, "TRB", "TCR", True],
+            ["cell2", "TRA3", "TRA3nt", 40, True, "TRA", "TCR", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "TRB3", "TRB3nt", 40, True, "TRB", "TCR", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", False],
+            ["cell3", "TRAC", "TRACnt", 50, True, "TRA", "TCR", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", False],
+        ],
+        columns=[
+            "cell_id",
+            "IR_VJ_1_junction_aa",
+            "IR_VJ_1_junction",
+            "IR_VJ_1_umi_count",
+            "IR_VJ_1_productive",
+            "IR_VJ_1_locus",
+            "IR_VJ_1_receptor_type",
+            "IR_VJ_2_junction_aa",
+            "IR_VJ_2_junction",
+            "IR_VJ_2_umi_count",
+            "IR_VJ_2_productive",
+            "IR_VJ_2_locus",
+            "IR_VJ_2_receptor_type",
+            "IR_VJ_3_junction_aa",
+            "IR_VJ_3_junction",
+            "IR_VJ_3_umi_count",
+            "IR_VJ_3_productive",
+            "IR_VJ_3_locus",
+            "IR_VJ_3_receptor_type",
+            "IR_VDJ_1_junction_aa",
+            "IR_VDJ_1_junction",
+            "IR_VDJ_1_umi_count",
+            "IR_VDJ_1_productive",
+            "IR_VDJ_1_locus",
+            "IR_VDJ_1_receptor_type",
+            "IR_VDJ_2_junction_aa",
+            "IR_VDJ_2_junction",
+            "IR_VDJ_2_umi_count",
+            "IR_VDJ_2_productive",
+            "IR_VDJ_2_locus",
+            "IR_VDJ_2_receptor_type",
+            "IR_VDJ_3_junction_aa",
+            "IR_VDJ_3_junction",
+            "IR_VDJ_3_umi_count",
+            "IR_VDJ_3_productive",
+            "IR_VDJ_3_locus",
+            "IR_VDJ_3_receptor_type",
+            "_multi_chain",
+        ],
+    ).set_index("cell_id")
+    # fmt: on
+    return _make_adata(obs, model="multi")
+
+
 @pytest.fixture(params=[False, True], ids=["AnnData", "MuData"])
 def adata_define_clonotypes(request):
     obs = pd.DataFrame(

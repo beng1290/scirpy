@@ -3,6 +3,7 @@ import sys
 from typing import cast
 
 import anndata as ad
+import awkward as ak
 import numpy as np
 import numpy.testing as npt
 import pandas as pd
@@ -84,6 +85,56 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
     expected_size = [2, 2, 1, 1, np.nan]
     pdt.assert_extension_array_equal(clonotypes.array, pd.array(expected), check_dtype=False)
     npt.assert_equal(clonotype_size.values, expected_size)
+
+
+def test_define_clonotype_clusters_multi_model_return_values(adata_multichain):
+    ir.pp.ir_dist(adata_multichain, metric="identity", sequence="aa")
+
+    clonotypes, clonotype_size, res = ir.tl.define_clonotype_clusters(
+        adata_multichain,
+        inplace=False,
+        within_group=None,
+        receptor_arms="VJ",
+        dual_ir="any",
+    )  # type: ignore
+
+    assert ak.to_list(clonotypes) == [[0, 3, 1, None, None, None], [1, None], [2]]
+    expected_size = pd.DataFrame(
+        [[30.0, 10.0, 0.0, 20.0], [0.0, 40.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
+        index=adata_multichain.obs_names,
+        columns=pd.Index([0, 1, 2, 3], dtype="int32", name="clone_id"),
+    )
+    pdt.assert_frame_equal(clonotype_size, expected_size)
+    assert set(res) == {"distances", "cell_indices", "clone_chain_indices", "clone_umi_count"}
+
+
+def test_define_clonotype_clusters_multi_model_within_group_from_airr(adata_multichain):
+    ir.pp.ir_dist(adata_multichain, metric="identity", sequence="aa")
+
+    clonotypes, _, _ = ir.tl.define_clonotype_clusters(
+        adata_multichain,
+        inplace=False,
+        within_group="receptor_type",
+        receptor_arms="VJ",
+        dual_ir="any",
+    )  # type: ignore
+
+    assert ak.to_list(clonotypes) == [[0, 3, 1, None, None, None], [1, None], [2]]
+
+
+def test_define_clonotype_clusters_multi_model_within_group_requires_airr_field(adata_multichain):
+    adata_multichain.obs["receptor_type"] = "TCR"
+    adata_multichain.obsm["airr"] = ak.without_field(adata_multichain.obsm["airr"], "receptor_type")
+    ir.pp.ir_dist(adata_multichain, metric="identity", sequence="aa")
+
+    with pytest.raises(ValueError, match="column `receptor_type` not found in `airr`"):
+        ir.tl.define_clonotype_clusters(
+            adata_multichain,
+            inplace=False,
+            within_group="receptor_type",
+            receptor_arms="VJ",
+            dual_ir="any",
+        )
 
 
 @pytest.mark.parametrize(
