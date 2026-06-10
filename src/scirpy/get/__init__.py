@@ -98,7 +98,7 @@ def _airr_col(
     # split VJ_1 into ("VJ", 0)
     receptor_arm, chain_i = chain.split("_")
     chain_i = int(chain_i) - 1
-    if chain_i < 0 or chain_i > np.max(ak.num(chain_indices[receptor_arm])):
+    if chain_i < 0 or chain_i >= np.max(ak.num(chain_indices[receptor_arm])):
         valid_chains = [
             f"{arm}_{chain}" for arm in ["VJ", "VDJ"] for chain in range(1, np.max(ak.num(chain_indices[arm])) + 1)
         ]

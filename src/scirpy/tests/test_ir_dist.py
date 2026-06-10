@@ -184,7 +184,7 @@ def test_clonotype_neighbors_multi_model_flattens_all_chains(adata_multichain):
         sequence_key="junction_aa",
     )
 
-    assert cn.dual_ir == "primary_only"
+    assert cn.dual_ir == "any"
     assert cn.clonotypes.columns.tolist() == ["VJ_1_junction_aa"]
     assert sorted(cn.clonotypes["VJ_1_junction_aa"].tolist()) == ["TRA1", "TRA2", "TRA3", "TRAC"]
     assert "3" in set(np.concatenate(list(cn.clone_chain_data["chain_index"].values())))

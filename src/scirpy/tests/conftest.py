@@ -64,9 +64,33 @@ def adata_multichain():
     # fmt: off
     obs = pd.DataFrame(
         [
-            ["cell1", "TRA1", "TRA1nt", 30, True, "TRA", "TCR", "TRA2", "TRA2nt", 20, True, "TRA", "TCR", "TRA3", "TRA3nt", 10, True, "TRA", "TCR", "TRB1", "TRB1nt", 30, True, "TRB", "TCR", "TRB2", "TRB2nt", 20, True, "TRB", "TCR", "TRB3", "TRB3nt", 10, True, "TRB", "TCR", True],
-            ["cell2", "TRA3", "TRA3nt", 40, True, "TRA", "TCR", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "TRB3", "TRB3nt", 40, True, "TRB", "TCR", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", False],
-            ["cell3", "TRAC", "TRACnt", 50, True, "TRA", "TCR", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", "nan", False],
+            ["cell1",
+                "TRA1", "TRA1nt", 30, True, "TRA", "TCR",
+                "TRA2", "TRA2nt", 20, True, "TRA", "TCR",
+                "TRA3", "TRA3nt", 10, True, "TRA", "TCR",
+                "TRB1", "TRB1nt", 30, True, "TRB", "TCR",
+                "TRB2", "TRB2nt", 20, True, "TRB", "TCR",
+                "TRB3", "TRB3nt", 10, True, "TRB", "TCR",
+                True
+            ],
+            ["cell2",
+                "TRA3", "TRA3nt", 40, True, "TRA", "TCR",
+                "nan", "nan", "nan", "nan", "nan", "nan",
+                "nan", "nan", "nan", "nan", "nan", "nan",
+                "TRB3", "TRB3nt", 40, True, "TRB", "TCR",
+                "nan", "nan", "nan", "nan", "nan", "nan",
+                "nan", "nan", "nan", "nan", "nan", "nan",
+                False
+            ],
+            ["cell3",
+                "TRAC", "TRACnt", 50, True, "TRA", "TCR",
+                "nan", "nan", "nan", "nan", "nan", "nan",
+                "nan", "nan", "nan", "nan", "nan", "nan",
+                "nan", "nan", "nan", "nan", "nan", "nan",
+                "nan", "nan", "nan", "nan", "nan", "nan",
+                "nan", "nan", "nan", "nan", "nan", "nan",
+                False
+            ],
         ],
         columns=[
             "cell_id",
