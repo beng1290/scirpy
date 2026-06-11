@@ -73,7 +73,6 @@ class ClonotypeNeighbors:
         """
         # if only one receptor arm is considered, we can just rename the columns.
         if len(self._receptor_arm_cols) == 1:
-            #
             combine_cols = ["umi_count"]
             #
             if self.match_columns is not None:
@@ -122,16 +121,25 @@ class ClonotypeNeighbors:
         and adding a column 'chain_index' to indicate which chain the information
         belongs to. The resulting table has one row per chain, and the 'chain_index'
         column can be used to group the chains back together.
+
+        The rest of this should probably go in the `clonotype` docstring. Adding it here
+        to keep it close to the implementation and avoid messing with the public docstring
+        while this is figured out.
+
+        For the multi-chain model, chains pairs are defined by their indices (VJ 1 to VDJ 1)
+        which in turn are defined by abundance. All chain pairs are always evaluated separately.
+
+        The dual_ir parameter determines how many chains to consider for each receptor arm. This differs
+        from single chain model, where the dual_ir parameter also determines the distance cutoff between
+        multichain cells, which should not be the case for the multi-chain model.
+
+        Different options for dual_ir:
+           * The "all" option doesn't apply, as each combination of chains is considered separately.
+           * The "primary_only" option considers only the most abundant pair. If receptor_type is in the match columns,
+             it considers the most abundant pair of each receptor type.
+           * The "any" option considers all chains and splits by receptor type
+             if receptor type is in the match columns.
         """
-        # chains pairs are defined by their indices (VJ 1 to VDJ 1) which in turn are defined by abundance.
-        # The dual_ir parameter determines how many chains to consider for each receptor arm and how to combine them:
-        #   The "all" option doesn't apply to the multi-chain model,
-        #       as each combination of chains is considered separately.
-        #   The "primary_only" option considers only the most abundant pair.
-        #       If receptor_type is in the match columns, it considers the
-        #       most abundant pair of each receptor type.
-        #   The "any" option considers all chains separately and splits by
-        #       receptor type if receptor type is in the match columns.
         if self.dual_ir == "all":
             raise NotImplementedError("`dual_ir='all'` is not implemented for the multi-chain receptor model.")
         #
@@ -158,13 +166,18 @@ class ClonotypeNeighbors:
                 columns={col: col.replace(f"VJ_{i}", "VJ_1").replace(f"VDJ_{i}", "VDJ_1") for col in cols_exist}
             )  # type: ignore
             df = df.dropna(how="all")
-            df["chain_index"] = str(i)
+            df["chain_index"] = i
             dfs.append(df)
         obs = pd.concat(dfs, axis=0)
         # create a receptor arm chain indices columns
         for arm in ["VJ_1", "VDJ_1"]:
-            has_arm = f"{arm}_{self.sequence_key}" in obs.columns and pd.notna(obs[f"{arm}_{self.sequence_key}"])
-            obs[f"{arm}_chain_index"] = np.where(has_arm, obs["chain_index"], "nan")
+            sequence_col = f"{arm}_{self.sequence_key}"
+            if sequence_col in obs.columns:
+                obs[f"{arm}_chain_index"] = obs["chain_index"].where(obs[sequence_col].notna())
+            else:
+                obs[f"{arm}_chain_index"] = np.nan
+            #
+            obs[f"{arm}_chain_index"] = obs[f"{arm}_chain_index"].astype("Int64")
         #
         obs = obs.drop(columns=["chain_index"])
         #
@@ -209,7 +222,7 @@ class ClonotypeNeighbors:
             if obs[col].dtype in ("category", "Int64"):
                 obs[col] = obs[col].astype(str)
             obs.loc[pd.isnull(obs[col]), col] = "nan"  # type: ignore
-            obs[col] = obs[col].astype(str)  # type: ignore
+            obs[col] = obs[col].astype(str).replace("<NA>", "nan")  # type: ignore
         # don't include multichain provenance columns or umi count in grouping
         cols = [
             col for col in obs.columns.tolist() if col not in ("VJ_1_chain_index", "VDJ_1_chain_index", "umi_count")

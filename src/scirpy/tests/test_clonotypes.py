@@ -98,7 +98,7 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             False,
             [[0, 3, 1, None, None, None], [1, None], [2]],
             [[30.0, 10.0, 0.0, 20.0], [0.0, 40.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
-            [3],
+            3,
             id="vj_any",
         ),
         pytest.param(
@@ -109,7 +109,7 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             False,
             [[0, 3, 1, None, None, None], [1, None], [2]],
             [[30.0, 10.0, 0.0, 20.0], [0.0, 40.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
-            [3],
+            3,
             id="vj_any_within_group",
         ),
         pytest.param(
@@ -120,7 +120,7 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             False,
             [[0, None, None, None, None, None], [1, None], [2]],
             [[30.0, 0.0, 0.0], [0.0, 40.0, 0.0], [0.0, 0.0, 50.0]],
-            [2],
+            2,
             id="vj_primary_only",
         ),
         pytest.param(
@@ -131,7 +131,7 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             False,
             [[None, None, None, 0, None, None], [None, 1], [None]],
             [[30.0, 0.0], [0.0, 40.0], [0.0, 0.0]],
-            [1],
+            1,
             id="vdj_primary_only",
         ),
         pytest.param(
@@ -142,7 +142,7 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             False,
             [[None, None, None, 0, 2, 1], [None, 1], [None]],
             [[30.0, 10.0, 20.0], [0.0, 40.0, 0.0], [0.0, 0.0, 0.0]],
-            [2],
+            2,
             id="vdj_any",
         ),
         pytest.param(
@@ -151,12 +151,9 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             "any",
             None,
             False,
-            [
-                [[0, 3, 1, None, None, None], [1, None], [2]],
-                [[None, None, None, 0, 3, 1], [None, 1], [None]],
-            ],
+            [[0, 3, 1, 0, 3, 1], [1, 1], [2]],
             [[60.0, 20.0, 0.0, 40.0], [0.0, 80.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
-            [3, 3],
+            3,
             id="any_any",
         ),
         pytest.param(
@@ -165,12 +162,9 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             "any",
             None,
             False,
-            [
-                [[0, 3, 1, None, None, None], [1, None], [2]],
-                [[None, None, None, 0, 3, 1], [None, 1], [None]],
-            ],
+            [[0, 3, 1, 0, 3, 1], [1, 1], [2]],
             [[60.0, 20.0, 0.0, 40.0], [0.0, 80.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
-            [3, 3],
+            3,
             id="all_any",
         ),
         pytest.param(
@@ -179,12 +173,9 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             "any",
             None,
             True,
-            [
-                [[0, 3, 1, None, None, None], [1, None], [2]],
-                [[None, None, None, 0, None, None], [None, 1], [None]],
-            ],
+            [[0, 3, 1, 0, None, None], [1, 1], [2]],
             [[60.0, 10.0, 0.0, 20.0], [0.0, 80.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
-            [3, 1],
+            3,
             id="any_any_uneven_arm_chain_counts",
         ),
         pytest.param(
@@ -193,12 +184,9 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             "any",
             "receptor_type",
             False,
-            [
-                [[0, 1, 3, None, None, None], [0, 2, None], [1, None]],
-                [[None, None, None, 1, 0, 4], [None, None, 0], [None, 1]],
-            ],
-            [[50.0, 50.0, 0.0, 10.0, 10.0], [80.0, 0.0, 10.0, 0.0, 0.0], [0.0, 80.0, 0.0, 0.0, 0.0]],
-            [3, 4],
+            [[1, 0, 3, 0, 1, 2], [1, 4, 1], [0, 0]],
+            [[50.0, 50.0, 10.0, 10.0, 0.0], [0.0, 80.0, 0.0, 0.0, 10.0], [80.0, 0.0, 0.0, 0.0, 0.0]],
+            4,
             id="any_any_mixed_receptor_type_within_group",
         ),
     ],
@@ -231,14 +219,8 @@ def test_define_clonotype_clusters_multi_model_return_values(
         receptor_arms=receptor_arms,
         dual_ir=dual_ir,
     )  # type: ignore
-    if receptor_arms in ["any", "all"]:
-        assert ak.to_list(clonotypes["VJ"]) == ak.to_list(ak.zip({"clone_id": expected_clonotypes[0]}))
-        assert ak.to_list(clonotypes["VDJ"]) == ak.to_list(ak.zip({"clone_id": expected_clonotypes[1]}))
-        assert np.max(clonotypes["VJ"]["clone_id"]) == expected_size_cols[0]
-        assert np.max(clonotypes["VDJ"]["clone_id"]) == expected_size_cols[1]
-    else:
-        assert ak.to_list(clonotypes) == ak.to_list(ak.zip({"clone_id": expected_clonotypes}))
-        assert np.max(clonotypes["clone_id"]) == expected_size_cols[0]
+    assert ak.to_list(clonotypes) == expected_clonotypes
+    assert np.max(clonotypes) == expected_size_cols
     #
     expected_size = np.array(expected_size_values)
     assert isinstance(clonotype_size, np.ndarray)
