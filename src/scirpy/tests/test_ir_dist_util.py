@@ -6,7 +6,13 @@ import pandas as pd
 import pytest
 import scipy.sparse as sp
 
-from scirpy.ir_dist._util import DoubleLookupNeighborFinder, merge_coo_matrices, reduce_and, reduce_or
+from scirpy.ir_dist._util import (
+    DoubleLookupNeighborFinder,
+    _merge_receptor_types,
+    merge_coo_matrices,
+    reduce_and,
+    reduce_or,
+)
 
 
 @pytest.fixture
@@ -141,6 +147,149 @@ def test_reduce_and(args, chain_count, expected):
     expected = np.array(expected, dtype=np.float16)
     chain_count = np.array(chain_count, dtype=int)
     npt.assert_equal(reduce_and(*args, chain_count=chain_count), expected)
+
+
+@pytest.mark.parametrize(
+    "vj_receptor_type,vdj_receptor_type,expected",
+    [
+        pytest.param(
+            "TCR",
+            "TCR",
+            [
+                {
+                    "receptor_type": "TCR",
+                    "VJ_1_junction_aa": "TRA1",
+                    "VDJ_1_junction_aa": "TRB1",
+                    "VJ_1_umi_count": 10,
+                    "VDJ_1_umi_count": 20,
+                }
+            ],
+            id="matching_tcr_chains_stay_in_one_row",
+        ),
+        pytest.param(
+            "BCR",
+            "BCR",
+            [
+                {
+                    "receptor_type": "BCR",
+                    "VJ_1_junction_aa": "IGK1",
+                    "VDJ_1_junction_aa": "IGH1",
+                    "VJ_1_umi_count": 10,
+                    "VDJ_1_umi_count": 20,
+                }
+            ],
+            id="matching_bcr_chains_stay_in_one_row",
+        ),
+        pytest.param(
+            "TCR",
+            "BCR",
+            [
+                {
+                    "receptor_type": "TCR",
+                    "VJ_1_junction_aa": "TRA1",
+                    "VDJ_1_junction_aa": None,
+                    "VJ_1_umi_count": 10,
+                    "VDJ_1_umi_count": None,
+                },
+                {
+                    "receptor_type": "BCR",
+                    "VJ_1_junction_aa": None,
+                    "VDJ_1_junction_aa": "IGH1",
+                    "VJ_1_umi_count": None,
+                    "VDJ_1_umi_count": 20,
+                },
+            ],
+            id="mixed_tcr_bcr_chains_split_into_arm_specific_rows",
+        ),
+    ],
+)
+def test_merge_receptor_types(vj_receptor_type, vdj_receptor_type, expected):
+    """Merge matching receptor types and split mixed TCR/BCR chains within one cell."""
+    is_bcr = vj_receptor_type == "BCR" and vdj_receptor_type == "BCR"
+    df = pd.DataFrame(
+        {
+            "VJ_1_receptor_type": [vj_receptor_type],
+            "VDJ_1_receptor_type": [vdj_receptor_type],
+            "VJ_1_junction_aa": ["IGK1" if is_bcr else "TRA1"],
+            "VDJ_1_junction_aa": ["IGH1" if vdj_receptor_type == "BCR" else "TRB1"],
+            "VJ_1_umi_count": [10],
+            "VDJ_1_umi_count": [20],
+        },
+        index=["cell1"],
+    )
+
+    res = _merge_receptor_types(df)
+
+    assert res.index.tolist() == ["cell1"] * len(expected)
+    assert "VJ_1_receptor_type" not in res.columns
+    assert "VDJ_1_receptor_type" not in res.columns
+    assert res.to_dict("records") == expected
+
+
+def test_merge_receptor_types_recombines_mixed_chains_by_receptor_type():
+    """Mixed rows from one cell are recombined by receptor type in numeric chain-index order."""
+    df = pd.DataFrame(
+        {
+            "VJ_1_receptor_type": ["TCR", "BCR"],
+            "VDJ_1_receptor_type": ["BCR", "TCR"],
+            "VJ_1_junction_aa": ["TRA_SHARED", "IGK_SHARED"],
+            "VDJ_1_junction_aa": ["IGH_SHARED", "TRB_SHARED"],
+            "VJ_1_chain_index": ["1", "2"],
+            "VDJ_1_chain_index": ["1", "2"],
+            "VJ_1_umi_count": [30, 20],
+            "VDJ_1_umi_count": [30, 20],
+        },
+        index=["cell1", "cell1"],
+    )
+
+    res = _merge_receptor_types(df)
+
+    assert res.index.tolist() == ["cell1", "cell1"]
+    assert res.to_dict("records") == [
+        {
+            "VJ_1_junction_aa": "TRA_SHARED",
+            "VDJ_1_junction_aa": "TRB_SHARED",
+            "VJ_1_chain_index": "1",
+            "VDJ_1_chain_index": "2",
+            "VJ_1_umi_count": 30,
+            "VDJ_1_umi_count": 20,
+            "receptor_type": "TCR",
+        },
+        {
+            "VJ_1_junction_aa": "IGK_SHARED",
+            "VDJ_1_junction_aa": "IGH_SHARED",
+            "VJ_1_chain_index": "2",
+            "VDJ_1_chain_index": "1",
+            "VJ_1_umi_count": 20,
+            "VDJ_1_umi_count": 30,
+            "receptor_type": "BCR",
+        },
+    ]
+
+
+def test_merge_receptor_types_pairs_split_rows_by_ordinal_chain_index_order():
+    """Split rows pair by ordinal position after numeric sorting, not matching chain-index values."""
+    df = pd.DataFrame(
+        {
+            "VJ_1_receptor_type": ["TCR", "TCR", "BCR", "BCR"],
+            "VDJ_1_receptor_type": ["BCR", "BCR", "TCR", "TCR"],
+            "VJ_1_junction_aa": ["TRA3", "TRA1", "IGK1", "IGK2"],
+            "VDJ_1_junction_aa": ["IGH1", "IGH2", "TRB2", "TRB3"],
+            "VJ_1_chain_index": ["3", "1", "1", "2"],
+            "VDJ_1_chain_index": ["1", "2", "2", "3"],
+        },
+        index=["cell1", "cell1", "cell1", "cell1"],
+    )
+
+    res = _merge_receptor_types(df)
+
+    assert res.index.tolist() == ["cell1", "cell1", "cell1", "cell1"]
+    assert res[["receptor_type", "VJ_1_junction_aa", "VDJ_1_junction_aa"]].to_dict("records") == [
+        {"receptor_type": "TCR", "VJ_1_junction_aa": "TRA1", "VDJ_1_junction_aa": "TRB2"},
+        {"receptor_type": "TCR", "VJ_1_junction_aa": "TRA3", "VDJ_1_junction_aa": "TRB3"},
+        {"receptor_type": "BCR", "VJ_1_junction_aa": "IGK1", "VDJ_1_junction_aa": "IGH1"},
+        {"receptor_type": "BCR", "VJ_1_junction_aa": "IGK2", "VDJ_1_junction_aa": "IGH2"},
+    ]
 
 
 @pytest.mark.parametrize(

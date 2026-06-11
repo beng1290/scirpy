@@ -137,6 +137,41 @@ def adata_multichain():
     return _make_adata(obs, model="multi")
 
 
+@pytest.fixture
+def adata_multichain_mixed_receptor_types():
+    """Multichain data with mixed TCR/BCR chains in the same cell.
+
+    The first cell intentionally has VJ and VDJ chain indices 1, 2, 3 with
+    VJ_1 as TCR and VDJ_1 as BCR to exercise receptor-type splitting after
+    flattening chain indices.
+    """
+    obs = pd.DataFrame(
+        {
+            "cell_id": ["cell1", "cell2", "cell3"],
+            "IR_VJ_1_junction_aa": ["TRA_SHARED", "TRA_SHARED", "IGK_SHARED"],
+            "IR_VJ_1_umi_count": [30, 40, 40],
+            "IR_VJ_1_receptor_type": ["TCR", "TCR", "BCR"],
+            "IR_VJ_2_junction_aa": ["IGK_SHARED", "TRA_OTHER", "nan"],
+            "IR_VJ_2_umi_count": [20, 10, "nan"],
+            "IR_VJ_2_receptor_type": ["BCR", "TCR", "nan"],
+            "IR_VJ_3_junction_aa": ["TRA_UNIQ", "nan", "nan"],
+            "IR_VJ_3_umi_count": [10, "nan", "nan"],
+            "IR_VJ_3_receptor_type": ["TCR", "nan", "nan"],
+            "IR_VDJ_1_junction_aa": ["IGH_SHARED", "TRB_SHARED", "IGH_SHARED"],
+            "IR_VDJ_1_umi_count": [30, 40, 40],
+            "IR_VDJ_1_receptor_type": ["BCR", "TCR", "BCR"],
+            "IR_VDJ_2_junction_aa": ["TRB_SHARED", "nan", "nan"],
+            "IR_VDJ_2_umi_count": [20, "nan", "nan"],
+            "IR_VDJ_2_receptor_type": ["TCR", "nan", "nan"],
+            "IR_VDJ_3_junction_aa": ["IGH_UNIQ", "nan", "nan"],
+            "IR_VDJ_3_umi_count": [10, "nan", "nan"],
+            "IR_VDJ_3_receptor_type": ["BCR", "nan", "nan"],
+            "_multi_chain": [True, False, False],
+        }
+    ).set_index("cell_id")
+    return _make_adata(obs, model="multi")
+
+
 @pytest.fixture(params=[False, True], ids=["AnnData", "MuData"])
 def adata_define_clonotypes(request):
     obs = pd.DataFrame(

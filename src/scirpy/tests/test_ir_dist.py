@@ -187,7 +187,7 @@ def test_clonotype_neighbors_multi_model_flattens_all_chains(adata_multichain):
     assert cn.dual_ir == "any"
     assert cn.clonotypes.columns.tolist() == ["VJ_1_junction_aa"]
     assert sorted(cn.clonotypes["VJ_1_junction_aa"].tolist()) == ["TRA1", "TRA2", "TRA3", "TRAC"]
-    assert "3" in set(np.concatenate(list(cn.clone_chain_data["chain_index"].values())))
+    assert "3" in set(np.concatenate(list(cn.clone_chain_data["VJ_chain_index"].values())))
     assert "10" in set(np.concatenate(list(cn.clone_chain_data["umi_count"].values())))
 
 
@@ -205,6 +205,48 @@ def test_clonotype_neighbors_multi_model_match_columns_from_airr(adata_multichai
 
     assert "match_columns" in cn.clonotypes
     assert set(cn.clonotypes["match_columns"]) == {("TCR",)}
+
+
+def test_clonotype_neighbors_multi_model_match_columns_split_mixed_receptor_types(
+    adata_multichain_mixed_receptor_types,
+):
+    """Mixed TCR/BCR chains in one cell are split and matched only within receptor type."""
+    adata = adata_multichain_mixed_receptor_types
+    ir.pp.ir_dist(adata, metric="identity", sequence="aa", key_added="ir_dist_aa_identity")
+
+    cn = ClonotypeNeighbors(
+        DataHandler.default(adata),
+        receptor_arms="any",
+        dual_ir="any",
+        match_columns=["receptor_type"],
+        distance_key="ir_dist_aa_identity",
+        sequence_key="junction_aa",
+    )
+
+    expected_clonotypes = pd.DataFrame(
+        {
+            "VJ_1_junction_aa": ["TRA_SHARED", "IGK_SHARED", "TRA_OTHER", "TRA_UNIQ", "nan"],
+            "VDJ_1_junction_aa": ["TRB_SHARED", "IGH_SHARED", "nan", "nan", "IGH_UNIQ"],
+            "match_columns": [("TCR",), ("BCR",), ("TCR",), ("TCR",), ("BCR",)],
+        }
+    )
+    expected_dist = np.array(
+        [
+            [1, 0, 0, 0, 0],
+            [0, 1, 0, 0, 0],
+            [0, 0, 1, 0, 0],
+            [0, 0, 0, 1, 0],
+            [0, 0, 0, 0, 1],
+        ]
+    )
+
+    _assert_frame_equal(cn.clonotypes, expected_clonotypes)
+    assert set(cn.clonotypes["match_columns"]) == {("TCR",), ("BCR",)}
+    assert cn.clone_chain_data["VJ_1_chain_index"]["0"] == ["1", "1"]
+    assert cn.clone_chain_data["VDJ_1_chain_index"]["0"] == ["1", "2"]
+    assert cn.clone_chain_data["VJ_1_chain_index"]["1"] == ["1", "2"]
+    assert cn.clone_chain_data["VDJ_1_chain_index"]["1"] == ["1", "1"]
+    npt.assert_array_equal(cn.compute_distances().toarray(), expected_dist)
 
 
 @pytest.mark.parametrize("with_adata2", [False, True])

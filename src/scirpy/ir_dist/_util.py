@@ -92,10 +92,12 @@ def reduce_and(*args, chain_count):
         return tmp_array
 
 
-def _merge_receptor_types(df):
+def _merge_receptor_types(df: pd.DataFrame) -> pd.DataFrame:
     """
     Merges VJ_1_receptor_type and VDJ_1_receptor_type into a single column.
-    If they do not match, splits the row into two separate rows.
+
+    If they do not match, splits the row into two separate rows and recombines
+    complementary split rows from the same cell and receptor type.
 
     Parameters
     ----------
@@ -106,9 +108,9 @@ def _merge_receptor_types(df):
     -------
     Transformed dataframe with merged receptor types.
     """
-    # Identify relevant columns dynamically
-    cols_vj = [col for col in df.columns if "VJ_1" in col]
-    cols_vdj = [col for col in df.columns if "VDJ_1" in col]
+    # Identify relevant columns
+    cols_vj = [col for col in df.columns if col.startswith("VJ_1")]
+    cols_vdj = [col for col in df.columns if col.startswith("VDJ_1")]
 
     # Identify rows where receptor types match or one is None
     match_condition = (
@@ -117,9 +119,62 @@ def _merge_receptor_types(df):
         | df["VDJ_1_receptor_type"].isna()
     )
 
+    def _chain_index_sort_key(row: pd.Series, chain_index_col: str) -> float:
+        """Sort chain-index strings numerically, keeping missing values last."""
+        chain_index = row.get(chain_index_col)
+        if pd.isna(chain_index):
+            return float("inf")
+        try:
+            return float(chain_index)
+        except ValueError:
+            return float("inf")
+
+    def _recombine_split_rows(split_df: pd.DataFrame) -> pd.DataFrame:
+        """Pair VJ-only and VDJ-only rows by receptor type and sorted ordinal position."""
+        out_rows = []
+        processed_groups = set()
+
+        for _, row in split_df.iterrows():
+            if pd.isna(row["_split_arm"]):
+                out_rows.append(row)
+                continue
+
+            group_key = (row.name, row["receptor_type"])
+            if group_key in processed_groups:
+                continue
+            processed_groups.add(group_key)
+
+            group = split_df.loc[(split_df.index == row.name) & (split_df["receptor_type"] == row["receptor_type"])]
+            group = group[pd.notna(group["_split_arm"])]
+            vj_rows = sorted(
+                (group_row for _, group_row in group[group["_split_arm"] == "VJ"].iterrows()),
+                key=lambda group_row: _chain_index_sort_key(group_row, "VJ_1_chain_index"),
+            )
+            vdj_rows = sorted(
+                (group_row for _, group_row in group[group["_split_arm"] == "VDJ"].iterrows()),
+                key=lambda group_row: _chain_index_sort_key(group_row, "VDJ_1_chain_index"),
+            )
+
+            for pos in range(max(len(vj_rows), len(vdj_rows))):
+                if pos >= len(vj_rows):
+                    out_rows.append(vdj_rows[pos])
+                    continue
+                if pos >= len(vdj_rows):
+                    out_rows.append(vj_rows[pos])
+                    continue
+
+                combined = vj_rows[pos].copy()
+                combined.loc[cols_vdj] = vdj_rows[pos].loc[cols_vdj]
+                out_rows.append(combined)
+
+        if not out_rows:
+            return split_df
+        return pd.DataFrame(out_rows, columns=split_df.columns)
+
     # Keep rows where receptor types match or one is None
     df_matched = df[match_condition].copy()
     df_matched["receptor_type"] = df_matched["VJ_1_receptor_type"].combine_first(df_matched["VDJ_1_receptor_type"])
+    df_matched["_split_arm"] = None
 
     # Identify rows where receptor types do not match
     df_unmatched = df[~match_condition].copy()
@@ -127,17 +182,21 @@ def _merge_receptor_types(df):
     # Create two new dataframes, one for VJ_1 and another for VDJ_1
     df_vj = df_unmatched.copy()
     df_vj["receptor_type"] = df_vj["VJ_1_receptor_type"]
+    df_vj["_split_arm"] = "VJ"
     df_vj[cols_vdj] = None  # Drop VDJ columns
 
     df_vdj = df_unmatched.copy()
     df_vdj["receptor_type"] = df_vdj["VDJ_1_receptor_type"]
+    df_vdj["_split_arm"] = "VDJ"
     df_vdj[cols_vj] = None  # Drop VJ columns
 
     # Combine all data
     final_df = pd.concat([df_matched, df_vj, df_vdj], ignore_index=False)
+    final_df = _recombine_split_rows(final_df)
 
     # Drop old receptor type columns
-    return final_df.drop(columns=["VJ_1_receptor_type", "VDJ_1_receptor_type"])
+    final_df = final_df.drop(columns=["VJ_1_receptor_type", "VDJ_1_receptor_type", "_split_arm"])
+    return final_df.astype(object).where(pd.notna(final_df), None)
 
 
 class ReverseLookupTable:

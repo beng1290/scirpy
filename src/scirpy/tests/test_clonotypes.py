@@ -1,6 +1,4 @@
 # pylama:ignore=W0611,W0404
-import itertools
-import json
 import sys
 from typing import cast
 
@@ -90,9 +88,10 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
 
 
 @pytest.mark.parametrize(
-    "receptor_arms,dual_ir,within_group,uneven_vdj,expected_clonotypes,expected_size_values,expected_size_cols,expected_receptor_arms",
+    "adata_fixture,receptor_arms,dual_ir,within_group,uneven_vdj,expected_clonotypes,expected_size_values,expected_size_cols",
     [
         pytest.param(
+            "adata_multichain",
             "VJ",
             "any",
             None,
@@ -100,10 +99,10 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             [[0, 3, 1, None, None, None], [1, None], [2]],
             [[30.0, 10.0, 0.0, 20.0], [0.0, 40.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
             [3],
-            {"VJ"},
             id="vj_any",
         ),
         pytest.param(
+            "adata_multichain",
             "VJ",
             "any",
             "receptor_type",
@@ -111,10 +110,10 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             [[0, 3, 1, None, None, None], [1, None], [2]],
             [[30.0, 10.0, 0.0, 20.0], [0.0, 40.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
             [3],
-            {"VJ"},
             id="vj_any_within_group",
         ),
         pytest.param(
+            "adata_multichain",
             "VJ",
             "primary_only",
             None,
@@ -122,10 +121,10 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             [[0, None, None, None, None, None], [1, None], [2]],
             [[30.0, 0.0, 0.0], [0.0, 40.0, 0.0], [0.0, 0.0, 50.0]],
             [2],
-            {"VJ"},
             id="vj_primary_only",
         ),
         pytest.param(
+            "adata_multichain",
             "VDJ",
             "primary_only",
             None,
@@ -133,10 +132,10 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             [[None, None, None, 0, None, None], [None, 1], [None]],
             [[30.0, 0.0], [0.0, 40.0], [0.0, 0.0]],
             [1],
-            {"VDJ"},
             id="vdj_primary_only",
         ),
         pytest.param(
+            "adata_multichain",
             "VDJ",
             "any",
             None,
@@ -144,10 +143,10 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             [[None, None, None, 0, 2, 1], [None, 1], [None]],
             [[30.0, 10.0, 20.0], [0.0, 40.0, 0.0], [0.0, 0.0, 0.0]],
             [2],
-            {"VDJ"},
             id="vdj_any",
         ),
         pytest.param(
+            "adata_multichain",
             "any",
             "any",
             None,
@@ -158,10 +157,10 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             ],
             [[60.0, 20.0, 0.0, 40.0], [0.0, 80.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
             [3, 3],
-            {"VJ", "VJ+VDJ"},
             id="any_any",
         ),
         pytest.param(
+            "adata_multichain",
             "all",
             "any",
             None,
@@ -172,10 +171,10 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             ],
             [[60.0, 20.0, 0.0, 40.0], [0.0, 80.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
             [3, 3],
-            {"VJ", "VJ+VDJ"},
             id="all_any",
         ),
         pytest.param(
+            "adata_multichain",
             "any",
             "any",
             None,
@@ -186,13 +185,27 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
             ],
             [[60.0, 10.0, 0.0, 20.0], [0.0, 80.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
             [3, 1],
-            {"VJ", "VJ+VDJ"},
             id="any_any_uneven_arm_chain_counts",
+        ),
+        pytest.param(
+            "adata_multichain_mixed_receptor_types",
+            "any",
+            "any",
+            "receptor_type",
+            False,
+            [
+                [[0, 1, 3, None, None, None], [0, 2, None], [1, None]],
+                [[None, None, None, 1, 0, 4], [None, None, 0], [None, 1]],
+            ],
+            [[50.0, 50.0, 0.0, 10.0, 10.0], [80.0, 0.0, 10.0, 0.0, 0.0], [0.0, 80.0, 0.0, 0.0, 0.0]],
+            [3, 4],
+            id="any_any_mixed_receptor_type_within_group",
         ),
     ],
 )
 def test_define_clonotype_clusters_multi_model_return_values(
-    adata_multichain,
+    request,
+    adata_fixture,
     receptor_arms,
     dual_ir,
     within_group,
@@ -200,9 +213,9 @@ def test_define_clonotype_clusters_multi_model_return_values(
     expected_clonotypes,
     expected_size_values,
     expected_size_cols,
-    expected_receptor_arms,
 ):
     """Multi-chain clonotype output is stable across public receptor-arm modes."""
+    adata_multichain = request.getfixturevalue(adata_fixture)
     if uneven_vdj:
         adata_multichain = adata_multichain.copy()
         chain_indices = adata_multichain.obsm["chain_indices"]
@@ -219,7 +232,6 @@ def test_define_clonotype_clusters_multi_model_return_values(
         dual_ir=dual_ir,
     )  # type: ignore
     if receptor_arms in ["any", "all"]:
-        print(clonotypes["VJ"], clonotypes["VDJ"])
         assert ak.to_list(clonotypes["VJ"]) == ak.to_list(ak.zip({"clone_id": expected_clonotypes[0]}))
         assert ak.to_list(clonotypes["VDJ"]) == ak.to_list(ak.zip({"clone_id": expected_clonotypes[1]}))
         assert np.max(clonotypes["VJ"]["clone_id"]) == expected_size_cols[0]
@@ -227,13 +239,17 @@ def test_define_clonotype_clusters_multi_model_return_values(
     else:
         assert ak.to_list(clonotypes) == ak.to_list(ak.zip({"clone_id": expected_clonotypes}))
         assert np.max(clonotypes["clone_id"]) == expected_size_cols[0]
+    #
     expected_size = np.array(expected_size_values)
     assert isinstance(clonotype_size, np.ndarray)
     npt.assert_equal(clonotype_size, expected_size)
-    assert set(res) == {"distances", "cell_indices", "clone_chain_indices", "clone_receptor_arm", "clone_umi_count"}
-
-    receptor_arm_values = set(itertools.chain.from_iterable(json.loads(res["clone_receptor_arm"]).values()))
-    assert receptor_arm_values == expected_receptor_arms
+    assert set(res) == {
+        "distances",
+        "cell_indices",
+        "VJ_clone_chain_indices",
+        "VDJ_clone_chain_indices",
+        "clone_umi_count",
+    }
 
 
 def test_define_clonotype_clusters_multi_model_dual_ir_all_not_implemented(adata_multichain):

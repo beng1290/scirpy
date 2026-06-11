@@ -200,19 +200,20 @@ def _unpack_multichain_clonotype_clusters(
     need to map the clone ids to their respective cell chains, which requires a bit of indexing.
     """
     # unpack clonotype cluster cell indices and clone umis for graph partitions (clonotype clusters)
-    idx, values, clone_chain_indices, clone_receptor_arms, umi_counts = zip(
+    idx, values, VJ_chain_index, VDJ_chain_index, umi_counts = zip(
         *itertools.chain.from_iterable(
             zip(
                 ctn.cell_indices[str(ct_id)],
                 itertools.repeat(str(clonotype_cluster)),
-                ctn.clone_chain_data["chain_index"][str(ct_id)],
-                ctn.clone_chain_data["receptor_arm"][str(ct_id)],
+                ctn.clone_chain_data["VJ_1_chain_index"][str(ct_id)],
+                ctn.clone_chain_data["VDJ_1_chain_index"][str(ct_id)],
                 ctn.clone_chain_data["umi_count"][str(ct_id)],
             )
             for ct_id, clonotype_cluster in enumerate(part.membership)
         ),
         strict=False,
     )
+    receptor_arms = ["VJ", "VDJ"] if ctn.receptor_arms in ["all", "any"] else [ctn.receptor_arms]
     # map the clone ids to their cell chains
     #
     # get the max number of chains per cell
@@ -227,40 +228,40 @@ def _unpack_multichain_clonotype_clusters(
     obs_inds = np.array([obs_name_to_idx.get(ind, -1) for ind in idx])
     #
     clone_ids = np.asarray(clone_ids)
-    _clone_chain_indices = np.asarray(clone_chain_indices, dtype=np.int64) - 1
+    _VJ_clone_chain_indices = np.asarray(VJ_chain_index, dtype=float) - 1
+    _VDJ_clone_chain_indices = np.asarray(VDJ_chain_index, dtype=float) - 1
     _clone_ids = np.asarray(values, dtype=np.int64)
     # for each receptor arm, map the clone ids to the respective cell chains
     # based on the clone chain indices and receptor arms
-    receptor_arms = ["VJ", "VDJ"] if ctn.receptor_arms in ["all", "any"] else [ctn.receptor_arms]
     clone_id_series = {arm: clone_ids.copy() for arm in receptor_arms}
     # map the clone ids to their cell chains
-    for obs, chain, receptor_arm, vals in zip(
-        obs_inds, _clone_chain_indices, clone_receptor_arms, _clone_ids, strict=True
+    for obs, VJ_chain, VDJ_chain, vals in zip(
+        obs_inds, _VJ_clone_chain_indices, _VDJ_clone_chain_indices, _clone_ids, strict=True
     ):
-        for arm in str(receptor_arm).split("+"):
-            clone_id_series[arm][obs, params.chain_indices[arm][obs][chain]] = vals
+        if not np.isnan(VJ_chain):
+            clone_id_series["VJ"][obs, params.chain_indices["VJ"][obs][int(VJ_chain)]] = vals
+        if not np.isnan(VDJ_chain):
+            clone_id_series["VDJ"][obs, params.chain_indices["VDJ"][obs][int(VDJ_chain)]] = vals
     #
     clonotype_cluster_series = {}
-    #
     for arm in receptor_arms:
-        clone_ids = clone_id_series[arm]
+        arm_clone_ids = clone_id_series[arm]
         # will convert none to na on ak.from_numpy
-        clone_ids = ak.from_numpy(np.where(clone_ids == -2, None, clone_ids).astype(float))
+        arm_clone_ids = ak.from_numpy(np.where(arm_clone_ids == -2, None, arm_clone_ids).astype(float))
         # drop invalid chains, convert to int (use -1 b/c ak throws a warning with None values)
         clone_ids_int = ak.values_astype(
-            ak.nan_to_num(ak.drop_none(ak.mask(clone_ids, clone_ids != -1)), nan=-1), np.int64, including_unknown=True
+            ak.nan_to_num(ak.drop_none(ak.mask(arm_clone_ids, arm_clone_ids != -1)), nan=-1),
+            np.int64,
+            including_unknown=True,
         )
-        # second pass to ensure -1 are masked as None and type is correct
-        clonotype_cluster_series[arm] = ak.mask(clone_ids_int, clone_ids_int != -1)
+        # ensure -1 are masked as None
+        clonotype_cluster_series[arm] = ak.zip({"clone_id": ak.mask(clone_ids_int, clone_ids_int != -1)})
     #
     if len(clonotype_cluster_series) == 1:
-        clonotype_cluster_series = ak.zip({"clone_id": clonotype_cluster_series[receptor_arms[0]]})
+        clonotype_cluster_series = clonotype_cluster_series[receptor_arms[0]]
     else:
         clonotype_cluster_series = ak.zip(
-            {
-                "VJ": ak.zip({"clone_id": clonotype_cluster_series["VJ"]}),
-                "VDJ": ak.zip({"clone_id": clonotype_cluster_series["VDJ"]}),
-            }
+            {"VJ": clonotype_cluster_series["VJ"], "VDJ": clonotype_cluster_series["VDJ"]}
         )
     # in size use the umi counts for clonotype clusters and sum across clonotypes
     df1 = pd.DataFrame({"clone_id": values, "umi_counts": umi_counts}, index=idx)
@@ -447,8 +448,8 @@ def define_clonotype_clusters(
             params, ctn, part
         )
         # keep the clone chain indices and umi counts -> could remove
-        clonotype_distance_res["clone_chain_indices"] = json.dumps(ctn.clone_chain_data["chain_index"])
-        clonotype_distance_res["clone_receptor_arm"] = json.dumps(ctn.clone_chain_data["receptor_arm"])
+        clonotype_distance_res["VJ_clone_chain_indices"] = json.dumps(ctn.clone_chain_data["VJ_1_chain_index"])
+        clonotype_distance_res["VDJ_clone_chain_indices"] = json.dumps(ctn.clone_chain_data["VDJ_1_chain_index"])
         clonotype_distance_res["clone_umi_count"] = json.dumps(ctn.clone_chain_data["umi_count"])
 
     # Return or store results
