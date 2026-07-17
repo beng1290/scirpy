@@ -1,3 +1,5 @@
+import itertools
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -59,81 +61,43 @@ def adata_cdr3_2(request):
     return adata
 
 
-@pytest.fixture
 def adata_multichain():
+    """Create a small AnnData object with multi-chain TCR data for testing."""
+    empty_chain = ["nan"] * 5
+    col_names = [
+        "IR_<c>_junction_aa",
+        "IR_<c>_junction",
+        "IR_<c>_umi_count",
+        "IR_<c>_locus",
+        "IR_<c>_receptor_type",
+    ]
+    cols = []
+    for c, i in itertools.product(["VJ", "VDJ"], range(1, 4)):
+        cols.extend([name.replace("<c>", f"{c}_{i}") for name in col_names])
     # fmt: off
-    obs = pd.DataFrame(
-        [
-            ["cell1",
-                "TRA1", "TRA1nt", 30, True, "TRA", "TCR",
-                "TRA2", "TRA2nt", 20, True, "TRA", "TCR",
-                "TRA3", "TRA3nt", 10, True, "TRA", "TCR",
-                "TRB1", "TRB1nt", 30, True, "TRB", "TCR",
-                "TRB2", "TRB2nt", 20, True, "TRB", "TCR",
-                "TRB3", "TRB3nt", 10, True, "TRB", "TCR",
-                True
-            ],
-            ["cell2",
-                "TRA3", "TRA3nt", 40, True, "TRA", "TCR",
-                "nan", "nan", "nan", "nan", "nan", "nan",
-                "nan", "nan", "nan", "nan", "nan", "nan",
-                "TRB3", "TRB3nt", 40, True, "TRB", "TCR",
-                "nan", "nan", "nan", "nan", "nan", "nan",
-                "nan", "nan", "nan", "nan", "nan", "nan",
-                False
-            ],
-            ["cell3",
-                "TRAC", "TRACnt", 50, True, "TRA", "TCR",
-                "nan", "nan", "nan", "nan", "nan", "nan",
-                "nan", "nan", "nan", "nan", "nan", "nan",
-                "nan", "nan", "nan", "nan", "nan", "nan",
-                "nan", "nan", "nan", "nan", "nan", "nan",
-                "nan", "nan", "nan", "nan", "nan", "nan",
-                False
-            ],
-        ],
-        columns=[
-            "cell_id",
-            "IR_VJ_1_junction_aa",
-            "IR_VJ_1_junction",
-            "IR_VJ_1_umi_count",
-            "IR_VJ_1_productive",
-            "IR_VJ_1_locus",
-            "IR_VJ_1_receptor_type",
-            "IR_VJ_2_junction_aa",
-            "IR_VJ_2_junction",
-            "IR_VJ_2_umi_count",
-            "IR_VJ_2_productive",
-            "IR_VJ_2_locus",
-            "IR_VJ_2_receptor_type",
-            "IR_VJ_3_junction_aa",
-            "IR_VJ_3_junction",
-            "IR_VJ_3_umi_count",
-            "IR_VJ_3_productive",
-            "IR_VJ_3_locus",
-            "IR_VJ_3_receptor_type",
-            "IR_VDJ_1_junction_aa",
-            "IR_VDJ_1_junction",
-            "IR_VDJ_1_umi_count",
-            "IR_VDJ_1_productive",
-            "IR_VDJ_1_locus",
-            "IR_VDJ_1_receptor_type",
-            "IR_VDJ_2_junction_aa",
-            "IR_VDJ_2_junction",
-            "IR_VDJ_2_umi_count",
-            "IR_VDJ_2_productive",
-            "IR_VDJ_2_locus",
-            "IR_VDJ_2_receptor_type",
-            "IR_VDJ_3_junction_aa",
-            "IR_VDJ_3_junction",
-            "IR_VDJ_3_umi_count",
-            "IR_VDJ_3_productive",
-            "IR_VDJ_3_locus",
-            "IR_VDJ_3_receptor_type",
-            "_multi_chain",
-        ],
-    ).set_index("cell_id")
+    cell_1 = [
+        "AAA", "GCGGCGGCG", 30,  "TRA", "TCR",
+        "AHA", "GCGAUGGCG", 20,  "TRA", "TCR",
+        "AAA", "GCUGCUGCU", 10,  "TRA", "TCR",
+        "MGT", "ATGGGCACC", 30, "TRB", "TCR",
+        "SFL", "AGCTTCCTG", 20, "TRB", "TCR",
+        "CCL", "TGCTGTCTC", 10, "TRB", "TCR",
+    ]
+    cell_2 = [
+        "AAA", "GCUGCUGCU", 40,  "TRA", "TCR",
+        *empty_chain * 2,
+        "CCL", "TGCTGTCTC", 40, "TRB", "TCR",
+        *empty_chain * 2,
+    ]
+    cell_3 = [
+        "ICL", "ATCTGCCTA", 50, "TRA", "TCR",
+        *empty_chain * 5,
+    ]
     # fmt: on
+    obs = pd.DataFrame(
+        [["cell1", *cell_1], ["cell2", *cell_2], ["cell3", *cell_3]],
+        columns=["cell_id", *cols],
+    ).set_index("cell_id")
     return _make_adata(obs, model="multi")
 
 
@@ -166,7 +130,6 @@ def adata_multichain_mixed_receptor_types():
             "IR_VDJ_3_junction_aa": ["IGH_UNIQ", "nan", "nan"],
             "IR_VDJ_3_umi_count": [10, "nan", "nan"],
             "IR_VDJ_3_receptor_type": ["BCR", "nan", "nan"],
-            "_multi_chain": [True, False, False],
         }
     ).set_index("cell_id")
     return _make_adata(obs, model="multi")

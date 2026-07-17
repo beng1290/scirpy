@@ -47,7 +47,6 @@ class ClonotypeNeighbors:
 
         self._receptor_arm_cols = ["VJ", "VDJ"] if self.receptor_arms in ["all", "any"] else [self.receptor_arms]
         self._dual_ir_cols = ["1"] if self.dual_ir == "primary_only" else ["1", "2"]
-
         # Initialize the DoubleLookupNeighborFinder and all lookup tables
         start = logging.info("Initializing lookup tables. ")  # type: ignore
 
@@ -283,7 +282,6 @@ class ClonotypeNeighbors:
                 assert not np.sum(~secondary_is_nan[primary_is_nan]), (
                     "There must not be a secondary chain if there is no primary one"
                 )
-
         return cell_indices, clone_chain_data, clonotypes
 
     def _add_distance_matrices(self) -> None:
@@ -595,7 +593,7 @@ class ClonotypeNeighbors:
                 if self.match_columns is not None:
                     tmp_dist_mat = tmp_dist_mat.multiply(match_column_mask)
 
-                if self.dual_ir == "all" and not self._multichain:
+                if self.dual_ir == "all":
                     filtered0, filtered1, filtered2 = filter_chain_count(tmp_dist_mat, receptor_arm)
                     dist_mats_chains[(receptor_arm, c1, c2, 0)] = filtered0
                     dist_mats_chains[(receptor_arm, c1, c2, 1)] = filtered1
@@ -603,7 +601,11 @@ class ClonotypeNeighbors:
                 else:
                     dist_mats_chains[(receptor_arm, c1, c2)] = tmp_dist_mat
 
-            if self.dual_ir == "primary_only" or self._multichain:
+            if self.dual_ir == "all" and self._multichain:
+                receptor_arm_res[receptor_arm] = (
+                    dist_mats_chains[(receptor_arm, 1, 1, 1)] + dist_mats_chains[(receptor_arm, 1, 1, 0)]
+                )
+            elif self.dual_ir == "primary_only" or self._multichain:
                 receptor_arm_res[receptor_arm] = dist_mats_chains[(receptor_arm, 1, 1)]
             elif self.dual_ir == "any" and not self._multichain:
                 receptor_arm_res[receptor_arm] = OR_min(
