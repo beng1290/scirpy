@@ -10,9 +10,33 @@ and this project adheres to [Semantic Versioning][].
 
 ## Unreleased
 
+### Chore
+
+ - Use the deprecation decorators from [scverse-misc](https://scverse-misc.readthedocs.io/) for deprecated functions
+   and function arguments. `scverse-misc` is now a hard dependency. Deprecated arguments that previously did not
+   emit any warning (`include_fields` and `use_umi_count_col` of the `io.read_*` functions, `cached` and `cache_path`
+   of `datasets.vdjdb` and `datasets.iedb`) now consistently raise a `FutureWarning`, and the API documentation
+   states in which version a function or argument was deprecated ([#704](https://github.com/scverse/scirpy/issues/704)).
+   The undocumented `scirpy.util.deprecated` decorator has been removed in favor of `scverse_misc.deprecated`.
+
+## v0.25.0
+
+### Fixes
+
+  - Adjust import location of plotting utils for compatibility with scanpy >= 1.13 ([#730](https://github.com/scverse/scirpy/pull/730))
+
+### Features
+
+  - Add support for TCRBLOSUM alpha/beta substitution matrices in the `tcrdist` distance metric via
+    `base_matrix="tcrblosum"`, and allow configuring the substitution-to-distance cap with `distance_cap`.
+
 ### Performance improvements
 
-  - Speed up identity distance metric computation for comparisons between two different sequence arrays.
+ - Speed up identity distance metric computation for comparisons between two different sequence arrays ([#701](https://github.com/scverse/scirpy/pull/701)).
+
+### Chore
+
+ - Clean up unneeded dependency constraints in pyproject.toml ([#718](https://github.com/scverse/scirpy/pull/718)).
 
 ## v0.24.0
 

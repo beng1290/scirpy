@@ -21,6 +21,7 @@ import scanpy as sc
 from anndata import AnnData
 from mudata import MuData
 from scanpy import logging
+from scverse_misc import Deprecation, deprecated_arg
 
 from scirpy.io._convert_anndata import from_airr_cells
 from scirpy.io._datastructures import AirrCell
@@ -30,6 +31,9 @@ from scirpy.util import _doc_params, _read_to_str, tqdm
 
 HERE = Path(__file__).parent
 DATASET_ENV_VAR = "SCIRPY_DATA_DIR"
+
+#: Deprecation of the `cached`/`cache_path` arguments, shared by all dataset functions that used to support them.
+_deprecation_caching = Deprecation("0.24.0", "Has no effect. Caching is now handled through `pooch`.")
 
 _AWS_EXAMPLEDATA = pooch.create(
     path=pooch.os_cache("scirpy"),
@@ -137,6 +141,8 @@ def iggytop(*, deduplicated: bool = True, tag: str = "latest") -> AnnData:
 
 
 @_doc_params(pooch_info=_POOCH_INFO)
+@deprecated_arg("cached", _deprecation_caching)
+@deprecated_arg("cache_path", _deprecation_caching)
 def vdjdb(cached: bool | None = None, *, cache_path: None = None, tag: str = "latest") -> AnnData:
     """\
     Download VDJdb through `IggyTop <https://iggytop.readthedocs.io/en/latest/>`_.
@@ -151,9 +157,9 @@ def vdjdb(cached: bool | None = None, *, cache_path: None = None, tag: str = "la
     Parameters
     ----------
     cached
-        Deprecated as of v0.24. Has no effect. Caching is handled through `pooch` now.
+        Has no effect. Caching is handled through `pooch` now.
     cache_path
-        Deprecated as of v0.24. Has no effect.
+        Has no effect. Caching is handled through `pooch` now.
     tag
         The IggyTop release tag to use. Defaults to ``"latest"``, which always fetches
         the most recent release. For reproducibility, pin a specific release tag
@@ -165,12 +171,6 @@ def vdjdb(cached: bool | None = None, *, cache_path: None = None, tag: str = "la
     Each entry is represented as if it was a cell, but without gene expression.
     Metadata is stored in `adata.uns["DB"]`.
     """
-    if cached is not None or cache_path is not None:
-        warnings.warn(
-            "The arguments `cached` and `cache_path` are deprecated since v0.24 and have no effect."
-            "Caching is now handled through Pooch.",
-            category=FutureWarning,
-        )
     adata = iggytop(deduplicated=False, tag=tag)
     adata = adata[adata.obs["source"] == "VDJDB"].copy()
     adata.uns["DB"]["name"] = "VDJDB"
@@ -179,6 +179,8 @@ def vdjdb(cached: bool | None = None, *, cache_path: None = None, tag: str = "la
 
 
 @_doc_params(pooch_info=_POOCH_INFO)
+@deprecated_arg("cached", _deprecation_caching)
+@deprecated_arg("cache_path", _deprecation_caching)
 def iedb(cached: bool | None = None, *, cache_path=None, tag: str = "latest") -> AnnData:
     """\
     Download IEDB through `IggyTop <https://iggytop.readthedocs.io/en/latest/>`_.
@@ -193,9 +195,9 @@ def iedb(cached: bool | None = None, *, cache_path=None, tag: str = "latest") ->
     Parameters
     ----------
     cached
-        Deprecated as of v0.24. Has no effect.
+        Has no effect. Caching is handled through `pooch` now.
     cache_path
-        Deprecated as of v0.24. Has no effect.
+        Has no effect. Caching is handled through `pooch` now.
     tag
         The IggyTop release tag to use. Defaults to ``"latest"``, which always fetches
         the most recent release. For reproducibility, pin a specific release tag
@@ -207,12 +209,6 @@ def iedb(cached: bool | None = None, *, cache_path=None, tag: str = "latest") ->
     Each entry is represented as if it was a cell, but without gene expression.
     Metadata is stored in `adata.uns["DB"]`.
     """
-    if cached is not None or cache_path is not None:
-        warnings.warn(
-            "The arguments `cached` and `cache_path` are deprecated since v0.24 and have no effect."
-            "Caching is now handled through Pooch.",
-            category=FutureWarning,
-        )
     adata = iggytop(deduplicated=False, tag=tag)
     adata = adata[adata.obs["source"] == "IEDB"].copy()
     adata.uns["DB"]["name"] = "IEDB"

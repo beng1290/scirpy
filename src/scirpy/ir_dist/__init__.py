@@ -7,17 +7,15 @@ import awkward as ak
 import numpy as np
 from scanpy import logging
 from scipy.sparse import csr_matrix
+from scverse_misc import Deprecation, deprecated
 
 from scirpy.get import airr as get_airr
-from scirpy.util import ChainType, DataHandler, _doc_params, _is_na, deprecated
+from scirpy.util import DataHandler, _doc_params, _is_na
 
 from . import metrics
 
 
-@deprecated(
-    "Due to added BCR support, this function has been renamed "
-    "to `sequence_dist`. The old version will be removed in a future release. "
-)
+@deprecated(Deprecation("0.5.0", "Due to added BCR support, this function has been renamed to `sequence_dist`."))
 def tcr_dist(*args, **kwargs):
     return sequence_dist(*args, **kwargs)
 
@@ -55,6 +53,8 @@ metric
       * `levenshtein` -- Levenshtein edit distance.
         See :class:`~scirpy.ir_dist.metrics.LevenshteinDistanceCalculator`.
       * `tcrdist` -- Distance based on pairwise sequence alignments between TCR CDR3 sequences based on the tcrdist metric.
+        Uses the BLOSUM62 substitution matrix by default. TCRBLOSUM alpha/beta substitution matrices
+        (:cite:`TCRBLOSUM`) can be selected with `base_matrix="tcrblosum"`.
         See :class:`~scirpy.ir_dist.metrics.TCRdistDistanceCalculator`.
       * `hamming` -- Hamming distance for CDR3 sequences of equal length.
         See :class:`~scirpy.ir_dist.metrics.HammingDistanceCalculator`.
@@ -86,7 +86,9 @@ def _get_metric_key(metric: MetricType) -> str:
     return "custom" if isinstance(metric, metrics.DistanceCalculator) else metric  # type: ignore
 
 
-def _get_distance_calculator(metric: MetricType, cutoff: int | None, *, n_jobs=-1, **kwargs):
+def _get_distance_calculator(
+    metric: MetricType, cutoff: int | None, *, n_jobs=-1, chain_type: Literal["VJ", "VDJ"] | None = None, **kwargs
+):
     """Returns an instance of :class:`~scirpy.ir_dist.metrics.DistanceCalculator`
     given a metric.
 
@@ -117,7 +119,7 @@ def _get_distance_calculator(metric: MetricType, cutoff: int | None, *, n_jobs=-
     elif metric == "gpu_hamming":
         dist_calc = metrics.GPUHammingDistanceCalculator(**kwargs)
     elif metric == "tcrdist":
-        dist_calc = metrics.TCRdistDistanceCalculator(n_jobs=n_jobs, **kwargs)
+        dist_calc = metrics.TCRdistDistanceCalculator(n_jobs=n_jobs, chain_type=chain_type, **kwargs)
     else:
         raise ValueError("Invalid distance metric.")
 
@@ -254,9 +256,9 @@ def _ir_dist(
                 result[chain_type][tmp_key] = unique_seqs
 
     # compute distance matrices
-    dist_calc = _get_distance_calculator(metric, cutoff, n_jobs=n_jobs, **kwargs)
     for chain_type in ["VJ", "VDJ"]:
         logging.info(f"Computing sequence x sequence distance matrix for {chain_type} sequences.")  # type: ignore
+        dist_calc = _get_distance_calculator(metric, cutoff, n_jobs=n_jobs, chain_type=chain_type, **kwargs)
         result[chain_type]["distances"] = dist_calc.calc_dist_mat(
             result[chain_type]["seqs"], result[chain_type].get("seqs2", None)
         ).tocsr()
