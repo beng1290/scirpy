@@ -8,12 +8,51 @@ and this project adheres to [Semantic Versioning][].
 [keep a changelog]: https://keepachangelog.com/en/1.0.0/
 [semantic versioning]: https://semver.org/spec/v2.0.0.html
 
-## v0.23.1
+## Unreleased
+
+### Chore
+
+ - Use the deprecation decorators from [scverse-misc](https://scverse-misc.readthedocs.io/) for deprecated functions
+   and function arguments. `scverse-misc` is now a hard dependency. Deprecated arguments that previously did not
+   emit any warning (`include_fields` and `use_umi_count_col` of the `io.read_*` functions, `cached` and `cache_path`
+   of `datasets.vdjdb` and `datasets.iedb`) now consistently raise a `FutureWarning`, and the API documentation
+   states in which version a function or argument was deprecated ([#704](https://github.com/scverse/scirpy/issues/704)).
+   The undocumented `scirpy.util.deprecated` decorator has been removed in favor of `scverse_misc.deprecated`.
+
+## v0.25.0
+
+### Fixes
+
+  - Adjust import location of plotting utils for compatibility with scanpy >= 1.13 ([#730](https://github.com/scverse/scirpy/pull/730))
+
+### Features
+
+  - Add support for TCRBLOSUM alpha/beta substitution matrices in the `tcrdist` distance metric via
+    `base_matrix="tcrblosum"`, and allow configuring the substitution-to-distance cap with `distance_cap`.
+
+### Performance improvements
+
+ - Speed up identity distance metric computation for comparisons between two different sequence arrays ([#701](https://github.com/scverse/scirpy/pull/701)).
+
+### Chore
+
+ - Clean up unneeded dependency constraints in pyproject.toml ([#718](https://github.com/scverse/scirpy/pull/718)).
+
+## v0.24.0
+
+### Additions
+
+ - Add the [IggyTop receptor reference database](https://iggytop.readthedocs.io/en/latest/index.html),
+   a metadatabase including receptor data from IEDB, VDJdb and others ([#652](https://github.com/scverse/scirpy/pull/652)). IggyTop includes additional data curation steps (e.g. low quality sequences from 10x dataset filtered out,
+   amino acid sequences are now consistently `junction_aa` sequences). It updated bimonthly, pre-built and can
+   be downloaded from GitHub. This is much faster and more reliable than the previous approach of downloading and building AnnData objects from reference database on-the-fly. The previously existing functions `datasets.iedb` and `datasets.vdjdb` are now wrappers around `datasets.iggytop`.
+
 
 ### Fixes
 
  - Filter unused categories from clonotype network legend ([#680](https://github.com/scverse/scirpy/pull/680/)).
  - Fix overflow error that occured in `ir.pp.ir_dist` with sequences longer than 127 characters ([#683](https://github.com/scverse/scirpy/pull/680))
+ - Remove `distance_key` parameter from `define_clonotypes` and raise warning if it is passed via `kwargs` ([#688](https://github.com/scverse/scirpy/pull/688))
 
 ## v0.23.0
 
