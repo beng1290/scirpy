@@ -199,6 +199,97 @@ def test_ir_dist_tcrdist_tcrblosum_chain_routing(mudata):
     npt.assert_array_equal(res["VDJ"]["seqs"], expected_seqs)
     npt.assert_array_equal(res["VJ"]["distances"].toarray(), np.array([[1, 16], [16, 1]]))
     npt.assert_array_equal(res["VDJ"]["distances"].toarray(), np.array([[1, 19], [19, 1]]))
+    
+def test_ir_dist_multi_model_uses_all_chain_indices(adata_multichain):
+    ir.pp.ir_dist(adata_multichain, metric="identity", sequence="aa", key_added="ir_dist_aa_identity")
+
+    res = adata_multichain.uns["ir_dist_aa_identity"]
+    npt.assert_array_equal(res["VJ"]["seqs"], np.array(["TRA1", "TRA2", "TRA3", "TRAC"]))
+    npt.assert_array_equal(res["VDJ"]["seqs"], np.array(["TRB1", "TRB2", "TRB3"]))
+    assert res["VJ"]["distances"].shape == (4, 4)
+    assert res["VDJ"]["distances"].shape == (3, 3)
+
+
+@pytest.mark.parametrize(
+    "adata_fixture,ctn_kwargs,expected_clonotypes,expected_match_columns,expected_chain_data,expected_dist",
+    [
+        pytest.param(
+            "adata_multichain",
+            {"receptor_arms": "VJ", "dual_ir": "any"},
+            {"VJ_1_junction_aa": ["TRA1", "TRA3", "TRAC", "TRA2"]},
+            None,
+            {"VJ_1_chain_index": {"contains": "3"}, "umi_count": {"contains": "10"}},
+            None,
+            id="flattens_all_chains",
+        ),
+        pytest.param(
+            "adata_multichain",
+            {"receptor_arms": "any", "dual_ir": "any", "match_columns": ["receptor_type"]},
+            None,
+            {("TCR",)},
+            {},
+            None,
+            id="match_columns_from_airr",
+        ),
+        pytest.param(
+            "adata_multichain_mixed_receptor_types",
+            {"receptor_arms": "any", "dual_ir": "any", "match_columns": ["receptor_type"]},
+            {
+                "VJ_1_junction_aa": ["IGK_SHARED", "TRA_SHARED", "nan", "TRA_UNIQ", "TRA_OTHER"],
+                "VDJ_1_junction_aa": ["IGH_SHARED", "TRB_SHARED", "IGH_UNIQ", "nan", "nan"],
+                "match_columns": [("BCR",), ("TCR",), ("BCR",), ("TCR",), ("TCR",)],
+            },
+            {("TCR",), ("BCR",)},
+            {
+                "VJ_1_chain_index": {"0": ["2", "1"], "1": ["1", "1"]},
+                "VDJ_1_chain_index": {"0": ["1", "1"], "1": ["2", "1"]},
+            },
+            [
+                [1, 0, 0, 0, 0],
+                [0, 1, 0, 0, 0],
+                [0, 0, 1, 0, 0],
+                [0, 0, 0, 1, 0],
+                [0, 0, 0, 0, 1],
+            ],
+            id="split_mixed_receptor_types",
+        ),
+    ],
+)
+def test_clonotype_neighbors_multi_model(
+    request,
+    adata_fixture,
+    ctn_kwargs,
+    expected_clonotypes,
+    expected_match_columns,
+    expected_chain_data,
+    expected_dist,
+):
+    """Multi-chain AIRR data are flattened and grouped into clonotypes correctly."""
+    adata = request.getfixturevalue(adata_fixture)
+    ir.pp.ir_dist(adata, metric="identity", sequence="aa", key_added="ir_dist_aa_identity")
+
+    cn = ClonotypeNeighbors(
+        DataHandler.default(adata),
+        distance_key="ir_dist_aa_identity",
+        sequence_key="junction_aa",
+        **ctn_kwargs,
+    )
+
+    assert cn.dual_ir == "any"
+    if expected_clonotypes is not None:
+        _assert_frame_equal(cn.clonotypes, pd.DataFrame(expected_clonotypes))
+    if expected_match_columns is not None:
+        assert "match_columns" in cn.clonotypes
+        assert set(cn.clonotypes["match_columns"]) == expected_match_columns
+    for chain_data_key, expected_values in expected_chain_data.items():
+        if "contains" in expected_values:
+            values = set(np.concatenate(list(cn.clone_chain_data[chain_data_key].values())))
+            assert expected_values["contains"] in values
+            continue
+        for clonotype_id, expected_value in expected_values.items():
+            assert cn.clone_chain_data[chain_data_key][clonotype_id] == expected_value
+    if expected_dist is not None:
+        npt.assert_array_equal(cn.compute_distances().toarray(), np.array(expected_dist))
 
 
 @pytest.mark.parametrize("with_adata2", [False, True])

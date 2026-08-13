@@ -2,7 +2,7 @@ import itertools
 import json
 import random
 from collections.abc import Sequence
-from typing import Literal, cast
+from typing import Any, Literal, cast
 
 import awkward as ak
 import igraph as ig
@@ -190,6 +190,82 @@ def _validate_parameters(
     return within_group, distance_key, key_added
 
 
+def _unpack_multichain_clonotype_clusters(
+    params: DataHandler, ctn: ClonotypeNeighbors, part: Any
+) -> tuple[ak.Array, np.ndarray]:
+    """Unpack clonotype cluster cell indices and clone umis for multi-chain model.
+
+    Clones are mapped back to their respective cell chains based on the clone chain
+    indices and receptor arms. The resulting clonotype cluster assignments are stored
+    as a chain-level annotation aligned to the original AIRR rearrangement rows per cell.
+    Cluster sizes are computed as UMI-weighted counts per clonotype cluster and stored
+    as a NumPy array.
+    """
+    # unpack clonotype cluster cell indices and clone umis for graph partitions (clonotype clusters)
+    idx, values, VJ_chain_index, VDJ_chain_index, umi_counts = zip(
+        *itertools.chain.from_iterable(
+            zip(
+                ctn.cell_indices[str(ct_id)],
+                itertools.repeat(str(clonotype_cluster)),
+                ctn.clone_chain_data["VJ_1_chain_index"][str(ct_id)],
+                ctn.clone_chain_data["VDJ_1_chain_index"][str(ct_id)],
+                ctn.clone_chain_data["umi_count"][str(ct_id)],
+            )
+            for ct_id, clonotype_cluster in enumerate(part.membership)
+        ),
+        strict=False,
+    )
+    # map the clone ids to their cell chains
+    #
+    # get the max number of chains per cell
+    target_size = max(ak.max(ak.num(params.airr)), 1)
+    # initialize a numpy array to hold clone ids (-2 where cell has a clone and -1 otherwise)
+    clone_ids = ak.fill_none(  # pylint: disable=no-member
+        ak.pad_none(ak.full_like(params.airr["umi_count"], -2), target_size, axis=1),
+        -1,
+    ).to_numpy()
+    # map obs names to indices, fwd and reverse
+    obs_name_to_idx = {obs: i for i, obs in enumerate(params.adata.obs_names)}
+    obs_inds = np.array([obs_name_to_idx.get(ind, -1) for ind in idx])
+    #
+    clone_ids = np.asarray(clone_ids)
+    _VJ_clone_chain_indices = np.asarray(VJ_chain_index, dtype=float) - 1
+    _VDJ_clone_chain_indices = np.asarray(VDJ_chain_index, dtype=float) - 1
+    _clone_ids = np.asarray(values, dtype=np.int64)
+    # for each receptor arm, map the clone ids to the respective cell chains
+    # based on the clone chain indices and receptor arms
+    for obs, VJ_chain, VDJ_chain, vals in zip(
+        obs_inds, _VJ_clone_chain_indices, _VDJ_clone_chain_indices, _clone_ids, strict=True
+    ):
+        if not np.isnan(VJ_chain):
+            clone_ids[obs, params.chain_indices["VJ"][obs][int(VJ_chain)]] = vals
+        if not np.isnan(VDJ_chain):
+            clone_ids[obs, params.chain_indices["VDJ"][obs][int(VDJ_chain)]] = vals
+    # will convert none to na on ak.from_numpy
+    clone_ids = ak.from_numpy(np.where(clone_ids == -2, None, clone_ids).astype(float))
+    # drop invalid chains, convert to int (use -1 b/c ak throws a warning with None values)
+    clone_ids_int = ak.values_astype(
+        ak.nan_to_num(ak.drop_none(ak.mask(clone_ids, clone_ids != -1)), nan=-1),
+        np.int64,
+        including_unknown=True,
+    )
+    # ensure -1 are masked as None
+    clonotype_cluster_series = ak.mask(clone_ids_int, clone_ids_int != -1)
+    # in size use the umi counts for clonotype clusters and sum across clonotypes
+    df1 = pd.DataFrame({"clone_id": values, "umi_counts": umi_counts}, index=idx)
+    df1["clone_id"] = df1["clone_id"].astype("int32")
+    df1["umi_counts"] = df1["umi_counts"].astype(float)
+    # may want sparse
+    clonotype_cluster_size_series = (
+        df1.pivot_table(index=df1.index, columns="clone_id", values="umi_counts", fill_value=0, aggfunc="sum")
+        .reindex(params.adata.obs_names)
+        .fillna(0)
+        .to_numpy()
+    )
+    #
+    return clonotype_cluster_series, clonotype_cluster_size_series
+
+
 @DataHandler.inject_param_docs(
     common_doc=_common_doc,
     within_group=_common_doc_within_group,
@@ -218,7 +294,7 @@ def define_clonotype_clusters(
     airr_mod="airr",
     airr_key="airr",
     chain_idx_key="chain_indices",
-) -> tuple[pd.Series, pd.Series, dict] | None:
+) -> tuple[pd.Series | ak.Array, pd.Series | np.ndarray, dict] | None:
     """
     Define :term:`clonotype clusters<Clonotype cluster>`.
 
@@ -280,6 +356,12 @@ def define_clonotype_clusters(
         to `ir_dist_{{sequence}}_{{metric}}`.
     inplace
         If `True`, adds the results to anndata, otherwise returns them.
+        For the multi-chain receptor model, clonotype cluster assignments are stored
+        in `adata.obsm[key_added]` as chain-level annotations aligned to the original
+        AIRR rearrangement rows per cell. Cluster sizes are stored in
+        `adata.obsm[f"{key_added}_size"]` as a NumPy array of UMI-weighted counts.
+        The corresponding `adata.uns[key_added]` entry stores the clonotype
+        distance metadata and per-clone chain provenance.
     {paralellism}
     {airr_mod}
     {airr_key}
@@ -328,7 +410,6 @@ def define_clonotype_clusters(
 
     clonotype_cluster_series = pd.Series(data=None, index=params.adata.obs_names, dtype=str)
     clonotype_cluster_size_series = pd.Series(data=None, index=params.adata.obs_names, dtype=int)
-
     #
     clonotype_distance_res = {
         "distances": clonotype_dist,
@@ -350,72 +431,12 @@ def define_clonotype_clusters(
         clonotype_cluster_series = pd.Series(values, index=idx).reindex(params.adata.obs_names)
         clonotype_cluster_size_series = clonotype_cluster_series.groupby(clonotype_cluster_series).transform("count")
     else:
-        # unpack clonotype cluster cell indices and clone umis for graph partitions (clonotype clusters)
-        idx, values, clone_chain_indices, umi_counts = zip(
-            *itertools.chain.from_iterable(
-                zip(
-                    ctn.cell_indices[str(ct_id)],
-                    itertools.repeat(str(clonotype_cluster)),
-                    ctn.clone_chain_data["chain_index"][str(ct_id)],
-                    ctn.clone_chain_data["umi_count"][str(ct_id)],
-                )
-                for ct_id, clonotype_cluster in enumerate(part.membership)
-            ),
-            strict=False,
+        clonotype_cluster_series, clonotype_cluster_size_series = _unpack_multichain_clonotype_clusters(
+            params, ctn, part
         )
-        # map the clone ids to their cell chains
-        #
-        # get the max number of chains per cell
-        target_size = max(ak.max(ak.num(params.airr)), 1)
-        # initialize a numpy array to hold clone ids (-2 where cell has a clone and -1 otherwise)
-        clone_ids = ak.fill_none(  # pylint: disable=no-member
-            ak.pad_none(ak.full_like(params.airr["umi_count"], -2), target_size, axis=1),
-            -1,
-        ).to_numpy()
-        # map obs names to indices, fwd and reverse
-        obs_name_to_idx = {obs: i for i, obs in enumerate(params.adata.obs_names)}
-        obs_inds = np.array([obs_name_to_idx.get(ind, -1) for ind in idx])
-        # cells without clones for this clustering get -1
-        # empty_ = np.array(
-        #    [0 if key in idx else 1 for key, i in obs_name_to_idx.items()]
-        # )
-        # clone_ids[empty_ == 1, :] = -1
-        clone_ids = np.asarray(clone_ids)
-        #
-        _clone_chain_indices = np.asarray(clone_chain_indices, dtype=np.int64) - 1
-        _clone_ids = np.asarray(values, dtype=np.int64)
-        chain_indices = params.chain_indices[ctn.receptor_arms]
-        # map the clone ids to their cell chains
-        for obs, chain, vals in zip(obs_inds, _clone_chain_indices, _clone_ids, strict=True):
-            clone_ids[obs, chain_indices[obs][chain]] = vals
-        # will convert none to na on ak.from_numpy
-        clone_ids = ak.from_numpy(np.where(clone_ids == -2, None, clone_ids).astype(float))
-        # drop invalid chains, convert to int (use -1 b/c ak throws a warning with None values)
-        clone_ids_int = ak.values_astype(
-            ak.nan_to_num(ak.drop_none(ak.mask(clone_ids, clone_ids != -1)), nan=-1),
-            np.int64,
-            including_unknown=True,
-        )
-        # second pass to ensure -1 are masked as None and type is correct
-        clonotype_cluster_series = ak.mask(clone_ids_int, clone_ids_int != -1)
-        # in size use the umi counts for clonotype clusters and sum across clonotypes
-        df1 = pd.DataFrame({"clone_id": values, "umi_counts": umi_counts}, index=idx)
-        df1["clone_id"] = df1["clone_id"].astype("int32")
-        df1["umi_counts"] = df1["umi_counts"].astype(float)
-        clonotype_cluster_size_series = (
-            df1.pivot_table(
-                index=df1.index,
-                columns="clone_id",
-                values="umi_counts",
-                fill_value=0,
-                aggfunc="sum",
-            )
-            .reindex(params.adata.obs_names)
-            .fillna(0)
-            .to_numpy()
-        )  # may want sparse in the future
-        # keep the clone chain indices and umi counts-> may remove in the future
-        clonotype_distance_res["clone_chain_indices"] = json.dumps(ctn.clone_chain_data["chain_index"])
+        # keep the clone chain indices and umi counts -> could remove
+        clonotype_distance_res["VJ_clone_chain_indices"] = json.dumps(ctn.clone_chain_data["VJ_1_chain_index"])
+        clonotype_distance_res["VDJ_clone_chain_indices"] = json.dumps(ctn.clone_chain_data["VDJ_1_chain_index"])
         clonotype_distance_res["clone_umi_count"] = json.dumps(ctn.clone_chain_data["umi_count"])
 
     # Return or store results
@@ -429,11 +450,7 @@ def define_clonotype_clusters(
             params.adata.obsm[f"{key_added}_size"] = clonotype_cluster_size_series
         params.adata.uns[key_added] = clonotype_distance_res
     else:
-        return (
-            clonotype_cluster_series,
-            clonotype_cluster_size_series,
-            clonotype_distance_res,
-        )
+        return clonotype_cluster_series, clonotype_cluster_size_series, clonotype_distance_res
 
 
 @DataHandler.inject_param_docs(
@@ -451,7 +468,7 @@ def define_clonotypes(
     airr_key="airr",
     chain_idx_key="chain_indices",
     **kwargs,
-) -> tuple[pd.Series, pd.Series, dict] | None:
+) -> tuple[pd.Series | ak.Array, pd.Series | np.ndarray, dict] | None:
     """
     Define :term:`clonotypes <Clonotype>` based on :term:`CDR3` nucleic acid
     sequence identity.
@@ -494,7 +511,7 @@ def define_clonotypes(
         logging.warn(
             'distance_key has been overwritten by "ir_dist_nt_identity". For custom distance_key options call define_clonotype_clusters directly.'
         )
-        kwargs = {k: v for k, v in kwargs if k != "distance_key"}
+        kwargs = {k: v for k, v in kwargs.items() if k != "distance_key"}
     return define_clonotype_clusters(
         params,
         key_added=key_added,

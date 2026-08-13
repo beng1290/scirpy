@@ -6,7 +6,13 @@ import pandas as pd
 import pytest
 import scipy.sparse as sp
 
-from scirpy.ir_dist._util import DoubleLookupNeighborFinder, merge_coo_matrices, reduce_and, reduce_or
+from scirpy.ir_dist._util import (
+    DoubleLookupNeighborFinder,
+    _merge_receptor_types,
+    merge_coo_matrices,
+    reduce_and,
+    reduce_or,
+)
 
 
 @pytest.fixture
@@ -141,6 +147,77 @@ def test_reduce_and(args, chain_count, expected):
     expected = np.array(expected, dtype=np.float16)
     chain_count = np.array(chain_count, dtype=int)
     npt.assert_equal(reduce_and(*args, chain_count=chain_count), expected)
+
+
+@pytest.mark.parametrize(
+    "data,expected",
+    [
+        pytest.param(
+            [["TCR", "TCR", "TRA1", "TRB1", 10, 20, 0, 0]],
+            [["TCR", "TRA1", "TRB1", 10, 20, 0, 0]],
+            id="matching_tcr_stay_in_one_row",
+        ),
+        pytest.param(
+            [["BCR", "BCR", "IGK1", "IGH1", 10, 20, 0, 0]],
+            [["BCR", "IGK1", "IGH1", 10, 20, 0, 0]],
+            id="matching_bcr_stay_in_one_row",
+        ),
+        pytest.param(
+            [["TCR", "BCR", "TRA1", "IGH1", 10, 20, 0, 0]],
+            [["BCR", None, "IGH1", None, 20, None, 0], ["TCR", "TRA1", None, 10, None, 0, None]],
+            id="mixed_split_into_arm_specific_rows",
+        ),
+        pytest.param(
+            [
+                ["TCR", "BCR", "TRA_SHARED", "IGH_SHARED", 30, 30, "1", "1"],
+                ["BCR", "TCR", "IGK_SHARED", "TRB_SHARED", 20, 20, "2", "2"],
+            ],
+            [
+                ["BCR", "IGK_SHARED", "IGH_SHARED", 20, 30, "2", "1"],
+                ["TCR", "TRA_SHARED", "TRB_SHARED", 30, 20, "1", "2"],
+            ],
+            id="mixed_recombined_by_receptor_type",
+        ),
+        pytest.param(
+            [
+                ["TCR", "BCR", "TRA3", "IGH1", None, None, "3", "1"],
+                ["TCR", "BCR", "TRA1", "IGH2", None, None, "1", "2"],
+                ["BCR", "TCR", "IGK1", "TRB2", None, None, "1", "2"],
+                ["BCR", "TCR", "IGK2", "TRB3", None, None, "2", "3"],
+            ],
+            [
+                ["BCR", "IGK1", "IGH1", None, None, "1", "1"],
+                ["TCR", "TRA1", "TRB2", None, None, "1", "2"],
+                ["BCR", "IGK2", "IGH2", None, None, "2", "2"],
+                ["TCR", "TRA3", "TRB3", None, None, "3", "3"],
+            ],
+            id="split_rows_pair_by_ordinal_chain_index_order",
+        ),
+    ],
+)
+def test_merge_receptor_types(data, expected):
+    """Merge receptor-type rows while preserving numeric chain-index order."""
+    receptor_type_columns = ["VJ_1_receptor_type", "VDJ_1_receptor_type"]
+    columns = [
+        "VJ_1_junction_aa",
+        "VDJ_1_junction_aa",
+        "VJ_1_umi_count",
+        "VDJ_1_umi_count",
+        "VJ_1_chain_index",
+        "VDJ_1_chain_index",
+    ]
+    df = pd.DataFrame(
+        [dict(zip([*receptor_type_columns, *columns], row, strict=True)) for row in data], index=["cell1"] * len(data)
+    )
+
+    res = _merge_receptor_types(df)
+
+    assert res.index.tolist() == ["cell1"] * len(expected)
+    assert "VJ_1_receptor_type" not in res.columns
+    assert "VDJ_1_receptor_type" not in res.columns
+    #
+    expected_records = [dict(zip(["receptor_type", *columns], record, strict=True)) for record in expected]
+    assert res.to_dict("records") == expected_records
 
 
 @pytest.mark.parametrize(

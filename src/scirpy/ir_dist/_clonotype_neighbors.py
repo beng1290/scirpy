@@ -1,7 +1,8 @@
 import itertools
 from collections.abc import Mapping, Sequence
-from typing import Literal
+from typing import Literal, cast
 
+import awkward as ak
 import numpy as np
 import pandas as pd
 import scipy.sparse as sp
@@ -9,7 +10,7 @@ from scanpy import logging
 
 from scirpy.get import _has_ir
 from scirpy.get import airr as get_airr
-from scirpy.util import SCIRPY_DUAL_IR_MODEL, DataHandler
+from scirpy.util import SCIRPY_MULTI_IR_MODEL, ChainType, DataHandler
 
 from ._util import DoubleLookupNeighborFinder, _merge_receptor_types
 
@@ -42,10 +43,10 @@ class ClonotypeNeighbors:
         self.sequence_key = sequence_key
         self.n_jobs = n_jobs
         self.chunksize = chunksize
+        self._multichain = params.model == SCIRPY_MULTI_IR_MODEL
 
         self._receptor_arm_cols = ["VJ", "VDJ"] if self.receptor_arms in ["all", "any"] else [self.receptor_arms]
         self._dual_ir_cols = ["1"] if self.dual_ir == "primary_only" else ["1", "2"]
-
         # Initialize the DoubleLookupNeighborFinder and all lookup tables
         start = logging.info("Initializing lookup tables. ")  # type: ignore
 
@@ -62,7 +63,139 @@ class ClonotypeNeighbors:
         self._add_lookup_tables()
         logging.hint("Done initializing lookup tables.", time=start)  # type: ignore
 
-    def _make_clonotype_table(self, params: DataHandler) -> tuple[Mapping, pd.DataFrame]:
+    def _merge_multichain_clonotype_table(self, obs: pd.DataFrame) -> pd.DataFrame:
+        """To simulate the single chain workflow, merge chain columns per receptor arm to `match_columns` names.
+
+        This is done by concatenating the chain information into a single row, and adding a column
+        'chain_index' to indicate which chain the information belongs to. The resulting table has one
+        row per chain, and the 'chain_index' column can be used to group the chains back together.
+        """
+        # if only one receptor arm is considered, we can just rename the columns.
+        if len(self._receptor_arm_cols) == 1:
+            combine_cols = ["umi_count"]
+            #
+            if self.match_columns is not None:
+                combine_cols += self.match_columns
+            #
+            cols = {}
+            for col in combine_cols:
+                cols[f"{self._receptor_arm_cols[0]}_1_{col}"] = col
+            obs.rename(columns=cols, inplace=True)
+            return obs
+        # If both arms are considered, we need to combine the columns (e.g. VJ_1_umi_count and VDJ_1_umi_count -> umi_count).
+        #
+        if self.match_columns is not None and "receptor_type" in self.match_columns:
+            obs = _merge_receptor_types(obs)
+        # should umi be an average instead of a sum or something else?
+        obs["umi_count"] = obs["VJ_1_umi_count"].infer_objects().fillna(0) + obs[
+            "VDJ_1_umi_count"
+        ].infer_objects().fillna(0)
+        obs.drop(columns=["VJ_1_umi_count", "VDJ_1_umi_count"], inplace=True)
+        # if no match colums, we can continue
+        if self.match_columns is None:
+            return obs
+        # for match columns, treat as categoricals and concatenate with '+' if both exist or just take the existing one.
+        for col in self.match_columns:
+            if col == "receptor_type":
+                continue
+            obs[col] = obs.apply(
+                lambda row, vj_col=f"VJ_1_{col}", vdj_col=f"VDJ_1_{col}": (
+                    row[vj_col] + "+" + row[vdj_col]
+                    if pd.notna(row[vj_col]) and pd.notna(row[vdj_col])
+                    else row[vj_col]
+                    if pd.notna(row[vj_col])
+                    else row[vdj_col]
+                    if pd.notna(row[vdj_col])
+                    else None
+                ),
+                axis=1,
+            )
+            obs.drop(columns=[f"VJ_1_{col}", f"VDJ_1_{col}"], inplace=True)
+        return obs
+
+    def _make_multichain_clonotype_table(self, params: DataHandler, airr_variables: list) -> pd.DataFrame:
+        """Make a clonotype table for the multi-chain receptor model.
+
+        This is done by concatenating the chain information into a single row,
+        and adding a column 'chain_index' to indicate which chain the information
+        belongs to. The resulting table has one row per chain, and the 'chain_index'
+        column can be used to group the chains back together.
+
+        The rest of this should probably go in the `clonotype` docstring. Adding it here
+        to keep it close to the implementation and avoid messing with the public docstring
+        while this is figured out.
+
+        For the multi-chain model, chains pairs are defined by their indices (VJ 1 to VDJ 1)
+        which in turn are defined by abundance. All chain pairs are always evaluated separately.
+
+        The dual_ir parameter determines how many chains to consider for each receptor arm. This differs
+        from single chain model, where the dual_ir parameter also determines the distance cutoff between
+        multichain cells, which should not be the case for the multi-chain model.
+
+        Different options for dual_ir:
+           * The "all" option doesn't apply, as each combination of chains is considered separately.
+           * The "primary_only" option considers only the most abundant pair. If receptor_type is in the match columns,
+             it considers the most abundant pair of each receptor type.
+           * The "any" option considers all chains and splits by receptor type
+             if receptor type is in the match columns.
+        """
+        if self.dual_ir == "all":
+            raise NotImplementedError("`dual_ir='all'` is not implemented for the multi-chain receptor model.")
+        #
+        self._dual_ir_cols = ["1"]
+        self._multichain = True
+        #
+        if self.match_columns is not None:
+            airr_variables += self.match_columns
+        airr_variables.append("umi_count")
+        #
+        max_chains = {arm: np.max(ak.num(params.chain_indices[arm])) + 1 for arm in self._receptor_arm_cols}
+        chains = [f"{arm}_{chain}" for arm in self._receptor_arm_cols for chain in range(1, max_chains[arm])]
+        #
+        obs = get_airr(params, airr_variables, cast(list[ChainType], chains))
+        # remove entries without receptor (e.g. only non-productive chains) or no sequences
+        obs = obs.loc[_has_ir(params) & np.any(~pd.isnull(obs), axis=1), :]
+        # rename to single chain (e.g. VJ_1_sequence, VJ_2_sequence -> VJ_1_sequence)
+        # and add a column 'chain_index' to indicate which chain it is.
+        dfs = []
+        for i in range(1, max(max_chains.values())):
+            cols_exist = [col for col in obs.columns.tolist() if f"VJ_{i}_" in col or f"VDJ_{i}_" in col]
+            df = obs.loc[:, cols_exist]
+            df = df.rename(
+                columns={col: col.replace(f"VJ_{i}", "VJ_1").replace(f"VDJ_{i}", "VDJ_1") for col in cols_exist}
+            )  # type: ignore
+            df = df.dropna(how="all")
+            df["chain_index"] = i
+            dfs.append(df)
+        obs = pd.concat(dfs, axis=0)
+        # create a receptor arm chain indices columns
+        for arm in ["VJ_1", "VDJ_1"]:
+            sequence_col = f"{arm}_{self.sequence_key}"
+            if sequence_col in obs.columns:
+                obs[f"{arm}_chain_index"] = obs["chain_index"].where(obs[sequence_col].notna())
+            else:
+                obs[f"{arm}_chain_index"] = np.nan
+            #
+            obs[f"{arm}_chain_index"] = obs[f"{arm}_chain_index"].astype("Int64")
+        #
+        obs = obs.drop(columns=["chain_index"])
+        #
+        obs = self._merge_multichain_clonotype_table(obs)
+        # if primary_only then keep only the chain with the max umi per obs
+        # if receptor type is in the match columns, keep the max umi chain per receptor type
+        if self.dual_ir == "primary_only":
+            if self.match_columns is not None and "receptor_type" in self.match_columns:
+                obs["umi_count_rank"] = obs.groupby([obs.index, "receptor_type"])["umi_count"].rank(
+                    method="first", ascending=False
+                )
+                obs = obs[obs["umi_count_rank"] == 1].drop(columns=["umi_count_rank"])
+            else:
+                obs["umi_count_rank"] = obs.groupby(obs.index)["umi_count"].rank(method="first", ascending=False)
+                obs = obs[obs["umi_count_rank"] == 1].drop(columns=["umi_count_rank"])
+        #
+        return obs
+
+    def _make_clonotype_table(self, params: DataHandler) -> tuple[Mapping, Mapping, pd.DataFrame]:
         """Define 'preliminary' clonotypes based identical IR features."""
         if not params.adata.obs_names.is_unique:
             raise ValueError("Obs names need to be unique!")
@@ -74,130 +207,62 @@ class ClonotypeNeighbors:
 
         if self.same_j_gene:
             airr_variables.append("j_call")
-
-        chains = [f"{arm}_{chain}" for arm, chain in itertools.product(self._receptor_arm_cols, self._dual_ir_cols)]
-        # append match_columns to airr_variables if scirpy multi chain model
-        if params.model != SCIRPY_DUAL_IR_MODEL:
+        if self._multichain:
+            obs = self._make_multichain_clonotype_table(params, airr_variables)
+        else:
+            chains = [f"{arm}_{chain}" for arm, chain in itertools.product(self._receptor_arm_cols, self._dual_ir_cols)]
+            obs = get_airr(params, airr_variables, cast(list[ChainType], chains))
+            # remove entries without receptor (e.g. only non-productive chains) or no sequences
+            obs = obs.loc[_has_ir(params) & np.any(~pd.isnull(obs), axis=1), :]
             if self.match_columns is not None:
-                airr_variables += self.match_columns
-            airr_variables.append("umi_count")
-            if self._dual_ir_cols == ["1", "2"]:
-                chains = [f"{arm}_{cid}" for arm in self._receptor_arm_cols for cid in params.chain_ids[arm]]
-
-        obs = get_airr(params, airr_variables, chains)
-        # remove entries without receptor (e.g. only non-productive chains) or no sequences
-        obs = obs.loc[_has_ir(params) & np.any(~pd.isnull(obs), axis=1), :]
-        if params.model == SCIRPY_DUAL_IR_MODEL and self.match_columns is not None:
-            obs = obs.join(
-                params.get_obs(self.match_columns),
-                validate="one_to_one",
-                how="inner",
-            )
-
-        if params.model != SCIRPY_DUAL_IR_MODEL:
-            # for multiple chains merge the chains into a single entry
-            if self._dual_ir_cols == ["1", "2"]:
-                #
-                self._dual_ir_cols = ["1"]
-                self.dual_ir = "primary_only"
-                if len(self._receptor_arm_cols) == 2:
-                    max_chains = max(len(params.chain_ids["VJ"]), len(params.chain_ids["VDJ"]))
-                else:
-                    max_chains = len(params.chain_ids[self._receptor_arm_cols[0]])
-                dfs = []
-                #
-                for i in range(1, max_chains + 1):
-                    cols_exist = [col for col in obs.columns.tolist() if f"VJ_{i}_" in col or f"VDJ_{i}_" in col]
-                    df = obs.loc[:, cols_exist]
-                    df.columns = [col.replace(f"VJ_{i}", "VJ_1").replace(f"VDJ_{i}", "VDJ_1") for col in cols_exist]
-                    df = df.dropna(how="all")
-                    df["chain_index"] = str(i)
-                    dfs.append(df)
-                obs = pd.concat(dfs, axis=0)
-
-            if len(self._receptor_arm_cols) == 2:
-                # combine the umi_counts of chains if both chains are to be considered
-                obs["umi_count"] = obs["VJ_1_umi_count"].infer_objects(False).fillna(0) + obs[
-                    "VDJ_1_umi_count"
-                ].infer_objects(False).fillna(0)
-                obs.drop(columns=["VJ_1_umi_count", "VDJ_1_umi_count"], inplace=True)
-
-                # bind match columns into single columns, if multiple receptor arms
-                # for receptor types, if the columns dont match we make new rows
-                # for other match columns they are concatenated with '+' only if both exist
-                if self.match_columns is not None:
-                    if "receptor_type" in self.match_columns:
-                        obs = _merge_receptor_types(obs)
-                    for col in self.match_columns:
-                        if col == "receptor_type":
-                            continue
-                        obs[self.match_columns] = obs.apply(
-                            lambda row, vj_col=f"VJ_1_{col}", vdj_col=f"VDJ_1_{col}": row[vj_col] + "+" + row[vdj_col]
-                            if pd.notna(row[vj_col]) and pd.notna(row[vdj_col])
-                            else row[vj_col]
-                            if pd.notna(row[vj_col])
-                            else row[vdj_col]
-                            if pd.notna(row[vj_col])
-                            else None,
-                            axis=1,
-                        )
-                        obs.drop(columns=[f"VJ_1_{col}", f"VDJ_1_{col}"], inplace=True)
-
-            else:
-                combine_columns = ["umi_count"]
-                # update the match column name, if single receptor arm
-                if self.match_columns is not None:
-                    combine_columns += self.match_columns
-                cols = {}
-                for col in combine_columns:
-                    cols[f"{self._receptor_arm_cols[0]}_1_{col}"] = col
-                obs.rename(columns=cols, inplace=True)
-            # needs to be string dtype for dictionary embedding
-            obs["umi_count"] = obs["umi_count"].astype(str)
-
+                obs = obs.join(params.get_obs(self.match_columns), validate="one_to_one", how="inner")
         # Converting nans to str("nan"), as we want string dtype
         for col in obs.columns:
-            if obs[col].dtype == "category":
+            if obs[col].dtype in ("category", "Int64"):
                 obs[col] = obs[col].astype(str)
             obs.loc[pd.isnull(obs[col]), col] = "nan"  # type: ignore
-            obs[col] = obs[col].astype(str)  # type: ignore
-
-        # don't include chain index or umi count in grouping
-        cols = [col for col in obs.columns.tolist() if col not in ("chain_index", "umi_count")]
-
+            obs[col] = obs[col].astype(str).replace("<NA>", "nan")  # type: ignore
+        # don't include multichain provenance columns or umi count in grouping
+        cols = [
+            col for col in obs.columns.tolist() if col not in ("VJ_1_chain_index", "VDJ_1_chain_index", "umi_count")
+        ]
         # using groupby instead of drop_duplicates since we need the group indices below
         clonotype_groupby = obs.groupby(cols, sort=False, observed=True)
         # This only gets the unique_values (the groupby index)
         clonotypes = clonotype_groupby.size().index.to_frame(index=False)
-
         if clonotypes.shape[0] == 0:
             raise ValueError(
                 "Error computing clonotypes. "
                 "No cells with IR information found (adata.obsm['chain_indices'] is None for all cells)"
             )
-
         # groupby.indices gets us a (index -> array of row indices) mapping.
         # It doesn't necessarily have the same order as `clonotypes`.
-        # This needs to be a dict of arrays, otherwiswe anndata
-        # can't save it to h5ad.
-        # Also the dict keys need to be of type `str`, or they'll get converted
-        # implicitly.
+        # This needs to be a dict of arrays, otherwise we anndata can't save it to h5ad.
+        # Also the dict keys need to be of type `str`, or they'll get converted implicitly.
         cell_indices = {
             str(i): obs.index[
                 # indices is not a tuple if it's just a single column.
-                clonotype_groupby.indices.get(ct_tuple[0] if len(ct_tuple) == 1 else ct_tuple, [])
+                clonotype_groupby.indices.get(
+                    ct_tuple[0] if len(ct_tuple) == 1 else ct_tuple,
+                    [],
+                )
             ].values.tolist()
             for i, ct_tuple in enumerate(clonotypes.itertuples(index=False, name=None))
         }
-        #
+        # this is the data we want to keep for each clonotype in the multichain model to map back to chain indices later.
         clone_chain_data = {
             k: {
                 str(i): obs[k]
-                .iloc[clonotype_groupby.indices.get(ct_tuple[0] if len(ct_tuple) == 1 else ct_tuple, [])]
+                .iloc[  # type: ignore
+                    clonotype_groupby.indices.get(
+                        ct_tuple[0] if len(ct_tuple) == 1 else ct_tuple,
+                        [],
+                    )
+                ]
                 .values.tolist()
                 for i, ct_tuple in enumerate(clonotypes.itertuples(index=False, name=None))
             }
-            for k in ("chain_index", "umi_count")
+            for k in ("VJ_1_chain_index", "VDJ_1_chain_index", "umi_count")
             if k in obs.columns
         }
         # make 'within group' a single column of tuples (-> only one distance
@@ -217,7 +282,6 @@ class ClonotypeNeighbors:
                 assert not np.sum(~secondary_is_nan[primary_is_nan]), (
                     "There must not be a secondary chain if there is no primary one"
                 )
-
         return cell_indices, clone_chain_data, clonotypes
 
     def _add_distance_matrices(self) -> None:
@@ -335,13 +399,11 @@ class ClonotypeNeighbors:
         match ("and"), the higher one should count.
         """
         lookup = {}
-        chain_ids = [(1, 1)] if self.dual_ir == "primary_only" else [(1, 1), (2, 2), (1, 2), (2, 1)]
+        chain_ids = [(1, 1)] if self.dual_ir == "primary_only" or self._multichain else [(1, 1), (2, 2), (1, 2), (2, 1)]
         for receptor_arm in self._receptor_arm_cols:
             for c1, c2 in chain_ids:
                 lookup[(receptor_arm, c1, c2)] = self.neighbor_finder.lookup(
-                    ct_ids,
-                    f"{receptor_arm}_{c1}",
-                    f"{receptor_arm}_{c2}",
+                    ct_ids, f"{receptor_arm}_{c1}", f"{receptor_arm}_{c2}"
                 )
         id_len = len(ct_ids)
 
@@ -539,14 +601,18 @@ class ClonotypeNeighbors:
                 else:
                     dist_mats_chains[(receptor_arm, c1, c2)] = tmp_dist_mat
 
-            if self.dual_ir == "primary_only":
+            if self.dual_ir == "all" and self._multichain:
+                receptor_arm_res[receptor_arm] = (
+                    dist_mats_chains[(receptor_arm, 1, 1, 1)] + dist_mats_chains[(receptor_arm, 1, 1, 0)]
+                )
+            elif self.dual_ir == "primary_only" or self._multichain:
                 receptor_arm_res[receptor_arm] = dist_mats_chains[(receptor_arm, 1, 1)]
-            elif self.dual_ir == "any":
+            elif self.dual_ir == "any" and not self._multichain:
                 receptor_arm_res[receptor_arm] = OR_min(
                     OR_min(dist_mats_chains[(receptor_arm, 1, 1)], dist_mats_chains[(receptor_arm, 1, 2)]),
                     OR_min(dist_mats_chains[(receptor_arm, 2, 1)], dist_mats_chains[(receptor_arm, 2, 2)]),
                 )
-            elif self.dual_ir == "all":
+            elif self.dual_ir == "all" and not self._multichain:
                 receptor_arm_res[receptor_arm] = OR_min(
                     AND_max(dist_mats_chains[(receptor_arm, 1, 1, 2)], dist_mats_chains[(receptor_arm, 2, 2, 2)]),
                     AND_max(dist_mats_chains[(receptor_arm, 2, 1, 2)], dist_mats_chains[(receptor_arm, 1, 2, 2)]),

@@ -218,36 +218,9 @@ class DataHandler:
         # could check if the model is valid here
         if self._chain_idx_key is not None:
             if "model" not in self.adata.uns[self._chain_idx_key]:
-                return SCIRPY_DUAL_IR_MODEL # backwards compatibility
+                return SCIRPY_DUAL_IR_MODEL  # backwards compatibility
             return self.adata.uns[self._chain_idx_key]["model"]
         raise AttributeError("DataHandler was initialized without chain indices.")
-
-    @property
-    def chain_ids(self) -> dict[str, list[str]]:
-        """A list of chain ids for VJ and VDJ chains."""
-        if self._chain_idx_key is None:
-            raise AttributeError("DataHandler was initialized without chain indices.")
-        if self.model == SCIRPY_DUAL_IR_MODEL:
-            return {"VJ": ["1", "2"], "VDJ": ["1", "2"]}
-        else:  # SCIRPY_MULTI_IR_MODEL
-            return {
-                arm: [str(chain) for chain in range(1, np.max(ak.num(self.chain_indices[arm])) + 1)]
-                for arm in ["VJ", "VDJ"]
-            }
-
-    @property
-    def valid_chains(self) -> list[str]:  # might not need this one
-        """Get the valid chains that are available in the chain indices."""
-        if self._chain_idx_key is None:
-            raise AttributeError("DataHandler was initialized without chain indices.")
-        if self.model == SCIRPY_DUAL_IR_MODEL:
-            return _VALID_DUAL_CHAINS
-        else:  # SCIRPY_MULTI_IR_MODEL
-            return [
-                f"{arm}_{chain}"
-                for arm in ["VJ", "VDJ"]
-                for chain in range(1, np.max(ak.num(self.chain_indices[arm])) + 1)
-            ]
 
     @property
     def airr(self) -> ak.Array:

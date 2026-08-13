@@ -1,3 +1,5 @@
+import itertools
+
 import numpy as np
 import pandas as pd
 import pytest
@@ -57,6 +59,80 @@ def adata_cdr3_2(request):
     uns_ = adata.mod["airr"].uns if isinstance(adata, MuData) else adata.uns
     uns_["DB"] = {"name": "TESTDB"}
     return adata
+
+
+def adata_multichain():
+    """Create a small AnnData object with multi-chain TCR data for testing."""
+    empty_chain = ["nan"] * 5
+    col_names = [
+        "IR_<c>_junction_aa",
+        "IR_<c>_junction",
+        "IR_<c>_umi_count",
+        "IR_<c>_locus",
+        "IR_<c>_receptor_type",
+    ]
+    cols = []
+    for c, i in itertools.product(["VJ", "VDJ"], range(1, 4)):
+        cols.extend([name.replace("<c>", f"{c}_{i}") for name in col_names])
+    # fmt: off
+    cell_1 = [
+        "AAA", "GCGGCGGCG", 30,  "TRA", "TCR",
+        "AHA", "GCGAUGGCG", 20,  "TRA", "TCR",
+        "AAA", "GCUGCUGCU", 10,  "TRA", "TCR",
+        "MGT", "ATGGGCACC", 30, "TRB", "TCR",
+        "SFL", "AGCTTCCTG", 20, "TRB", "TCR",
+        "CCL", "TGCTGTCTC", 10, "TRB", "TCR",
+    ]
+    cell_2 = [
+        "AAA", "GCUGCUGCU", 40,  "TRA", "TCR",
+        *empty_chain * 2,
+        "CCL", "TGCTGTCTC", 40, "TRB", "TCR",
+        *empty_chain * 2,
+    ]
+    cell_3 = [
+        "ICL", "ATCTGCCTA", 50, "TRA", "TCR",
+        *empty_chain * 5,
+    ]
+    # fmt: on
+    obs = pd.DataFrame(
+        [["cell1", *cell_1], ["cell2", *cell_2], ["cell3", *cell_3]],
+        columns=["cell_id", *cols],
+    ).set_index("cell_id")
+    return _make_adata(obs, model="multi")
+
+
+@pytest.fixture
+def adata_multichain_mixed_receptor_types():
+    """Multichain data with mixed TCR/BCR chains in the same cell.
+
+    The first cell intentionally has VJ and VDJ chain indices 1, 2, 3 with
+    VJ_1 as TCR and VDJ_1 as BCR to exercise receptor-type splitting after
+    flattening chain indices.
+    """
+    obs = pd.DataFrame(
+        {
+            "cell_id": ["cell1", "cell2", "cell3"],
+            "IR_VJ_1_junction_aa": ["TRA_SHARED", "TRA_SHARED", "IGK_SHARED"],
+            "IR_VJ_1_umi_count": [30, 40, 40],
+            "IR_VJ_1_receptor_type": ["TCR", "TCR", "BCR"],
+            "IR_VJ_2_junction_aa": ["IGK_SHARED", "TRA_OTHER", "nan"],
+            "IR_VJ_2_umi_count": [20, 10, "nan"],
+            "IR_VJ_2_receptor_type": ["BCR", "TCR", "nan"],
+            "IR_VJ_3_junction_aa": ["TRA_UNIQ", "nan", "nan"],
+            "IR_VJ_3_umi_count": [10, "nan", "nan"],
+            "IR_VJ_3_receptor_type": ["TCR", "nan", "nan"],
+            "IR_VDJ_1_junction_aa": ["IGH_SHARED", "TRB_SHARED", "IGH_SHARED"],
+            "IR_VDJ_1_umi_count": [30, 40, 40],
+            "IR_VDJ_1_receptor_type": ["BCR", "TCR", "BCR"],
+            "IR_VDJ_2_junction_aa": ["TRB_SHARED", "nan", "nan"],
+            "IR_VDJ_2_umi_count": [20, "nan", "nan"],
+            "IR_VDJ_2_receptor_type": ["TCR", "nan", "nan"],
+            "IR_VDJ_3_junction_aa": ["IGH_UNIQ", "nan", "nan"],
+            "IR_VDJ_3_umi_count": [10, "nan", "nan"],
+            "IR_VDJ_3_receptor_type": ["BCR", "nan", "nan"],
+        }
+    ).set_index("cell_id")
+    return _make_adata(obs, model="multi")
 
 
 @pytest.fixture(params=[False, True], ids=["AnnData", "MuData"])

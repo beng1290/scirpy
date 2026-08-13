@@ -8,8 +8,7 @@ from anndata import AnnData
 from mudata import MuData
 
 from scirpy.io import AirrCell
-from scirpy.pp._index_chains import SCIRPY_DUAL_IR_MODEL
-from scirpy.util import _is_na, _is_na2
+from scirpy.util import SCIRPY_DUAL_IR_MODEL, SCIRPY_MODELS, _is_na, _is_na2
 
 
 def _normalize_df_types(df: pd.DataFrame):
@@ -39,7 +38,7 @@ def _squarify(matrix: list[list] | np.ndarray):
     return matrix
 
 
-def _make_adata(obs: pd.DataFrame, mudata: bool = False) -> AnnData | MuData:
+def _make_adata(obs: pd.DataFrame, mudata: bool = False, model: str = SCIRPY_DUAL_IR_MODEL) -> AnnData | MuData:
     """Generate an AnnData object from a obs dataframe formatted according to the old obs-based scheam.
 
     This is used to convert test cases from unittests. Writing them from scratch
@@ -47,7 +46,7 @@ def _make_adata(obs: pd.DataFrame, mudata: bool = False) -> AnnData | MuData:
     manually, so we use this instead.
 
     It accepts the following columns
-        * IR_{VJ,VDJ}_{<airr_var>}_{1,2}, to set an arbitrary airr variable for any of the four chains
+        * IR_{VJ,VDJ}_{<chain number>}_{<airr_var>}, to set an arbitrary airr variable for any chain
         * _multi_chain (optional), to manually set the multi chain status. Defaults to False.
 
     Compared to the function that converts legacy anndata objects via an intermediate step of
@@ -62,8 +61,19 @@ def _make_adata(obs: pd.DataFrame, mudata: bool = False) -> AnnData | MuData:
     obs.index = obs.index.astype(str)
     # ensure that the columns are ordered, i.e. for each variable, VJ_1, VJ_2, VDJ1, ... come in the same order.
     obs.sort_index(axis=1, inplace=True)
+    model = SCIRPY_MODELS.get(model, model)
     cols = [x for x in obs.columns if x.startswith("IR_")]
     unique_variables = {c.split("_", 3)[3] for c in cols}
+    chain_ids = sorted(
+        {"_".join(c.split("_", 3)[1:3]) for c in cols},
+        key=lambda x: (["VJ", "VDJ"].index(x.split("_")[0]), int(x.split("_")[1])),
+    )
+    max_chains = {
+        receptor_arm: max(
+            [int(chain.split("_")[1]) for chain in chain_ids if chain.startswith(receptor_arm)], default=0
+        )
+        for receptor_arm in ["VJ", "VDJ"]
+    }
 
     def _sanitize_value(v):
         """Nans are represented as the string `"nan"` in most test cases for historical reasons"""
@@ -74,7 +84,7 @@ def _make_adata(obs: pd.DataFrame, mudata: bool = False) -> AnnData | MuData:
     # of a certain cell.
     has_chain = []
     for _, row in obs.iterrows():
-        has_chain_dict = dict.fromkeys(["VJ_1", "VJ_2", "VDJ_1", "VDJ_2"], False)
+        has_chain_dict = dict.fromkeys(chain_ids, False)
         for c in cols:
             # if any of the columns has that chain, we set the value to True
             _, receptor_arm, chain, var = c.split("_", 3)
@@ -87,7 +97,10 @@ def _make_adata(obs: pd.DataFrame, mudata: bool = False) -> AnnData | MuData:
     chain_idx_list = []
     for has_chain_dict, (_, row) in zip(has_chain, obs.iterrows(), strict=False):
         tmp_chains = []
-        tmp_chain_idx: dict[str, Any] = {k: [None, None] for k in ["VJ", "VDJ"]}
+        tmp_chain_idx: dict[str, Any] = {
+            receptor_arm: [None] * (2 if model == SCIRPY_DUAL_IR_MODEL else max(max_chains[receptor_arm], 1))
+            for receptor_arm in ["VJ", "VDJ"]
+        }
         for chain, row_has_chain in has_chain_dict.items():
             receptor_arm, chain_i = chain.split("_")
             chain_i = int(chain_i) - 1
@@ -109,7 +122,7 @@ def _make_adata(obs: pd.DataFrame, mudata: bool = False) -> AnnData | MuData:
         X=None,
         obs=obs.loc[:, ~obs.columns.isin(cols)].copy(),  # type:ignore
         obsm={"chain_indices": chain_indices, "airr": airr_data},  # type:ignore
-        uns={"scirpy_version": version("scirpy"), "chain_indices": {"model": SCIRPY_DUAL_IR_MODEL}},
+        uns={"scirpy_version": version("scirpy"), "chain_indices": {"model": model}},
     )
     adata.strings_to_categoricals()
     if mudata:

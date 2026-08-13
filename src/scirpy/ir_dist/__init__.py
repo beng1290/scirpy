@@ -1,8 +1,9 @@
 """Compute distances between immune receptor sequences"""
 
 from collections.abc import Sequence
-from typing import Literal
+from typing import Literal, cast
 
+import awkward as ak
 import numpy as np
 from scanpy import logging
 from scipy.sparse import csr_matrix
@@ -232,16 +233,12 @@ def _ir_dist(
             result["params"]["DB"] = params_ref.adata.uns["DB"]
         except KeyError:
             result["params"]["DB"] = "AnnData without `.uns['DB'] metadata."
-    _valid_chains = params.valid_chains
 
     # get all unique seqs for VJ and VDJ
     def _get_unique_seqs(tmp_adata, chain_type, chain_ids):
         """Get all unique sequences for a chain type"""
         tmp_seqs = np.concatenate(
-            [
-                get_airr(tmp_adata, key, f"{chain_type}_{chain_id}", _valid_chains=_valid_chains).values
-                for chain_id in chain_ids
-            ]  # type: ignore
+            [get_airr(tmp_adata, key, f"{chain_type}_{chain_id}").values for chain_id in chain_ids]  # type: ignore
         )
         return np.unique([x.upper() for x in tmp_seqs[~_is_na(tmp_seqs)]])
 
@@ -249,7 +246,7 @@ def _ir_dist(
         if tmp_params is not None:
             for chain_type in ["VJ", "VDJ"]:
                 tmp_key = "seqs2" if i == 1 else "seqs"
-                chain_ids = tmp_params.chain_ids[chain_type]
+                chain_ids = [str(chain) for chain in range(1, np.max(ak.num(tmp_params.chain_indices[chain_type])) + 1)]
                 unique_seqs = _get_unique_seqs(tmp_params.adata, chain_type, chain_ids)
                 if tmp_key == "seqs2" and not len(unique_seqs):
                     logging.warning(

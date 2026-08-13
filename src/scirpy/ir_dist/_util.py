@@ -92,10 +92,12 @@ def reduce_and(*args, chain_count):
         return tmp_array
 
 
-def _merge_receptor_types(df):
+def _merge_receptor_types(df: pd.DataFrame) -> pd.DataFrame:
     """
     Merges VJ_1_receptor_type and VDJ_1_receptor_type into a single column.
-    If they do not match, splits the row into two separate rows.
+
+    If they do not match, splits the row into two separate rows and recombines
+    complementary split rows from the same cell and receptor type.
 
     Parameters
     ----------
@@ -106,38 +108,59 @@ def _merge_receptor_types(df):
     -------
     Transformed dataframe with merged receptor types.
     """
-    # Identify relevant columns dynamically
-    cols_vj = [col for col in df.columns if "VJ_1" in col]
-    cols_vdj = [col for col in df.columns if "VDJ_1" in col]
 
-    # Identify rows where receptor types match or one is None
-    match_condition = (
-        (df["VJ_1_receptor_type"] == df["VDJ_1_receptor_type"])
-        | df["VJ_1_receptor_type"].isna()
-        | df["VDJ_1_receptor_type"].isna()
+    def _make_arm_table(arm: Literal["VJ", "VDJ"], source_order: pd.Series) -> pd.DataFrame:
+        """Create one row per present arm, ordered for receptor-type pairing."""
+        receptor_type_col = f"{arm}_1_receptor_type"
+        arm_cols = [col for col in df.columns if col.startswith(f"{arm}_1") and col != receptor_type_col]
+        has_receptor_type = df[receptor_type_col].notna()
+
+        arm_df = df.loc[has_receptor_type, arm_cols].copy()
+        arm_df["_cell_id"] = df.index[has_receptor_type]
+        arm_df["_source_order"] = source_order.loc[has_receptor_type].to_numpy()
+        arm_df["receptor_type"] = df.loc[has_receptor_type, receptor_type_col].to_numpy()
+        arm_df["_chain_index_order"] = arm_df[f"{arm}_1_chain_index"].fillna(np.inf)
+        arm_df = arm_df.sort_values(
+            ["_cell_id", "receptor_type", "_chain_index_order", "_source_order"],
+            kind="stable",
+        )
+        arm_df["_ordinal"] = arm_df.groupby(["_cell_id", "receptor_type"], sort=False).cumcount()
+        return arm_df.drop(columns=["_chain_index_order"])
+
+    source_order = pd.Series(np.arange(len(df)), index=df.index)
+    source_type_map = {
+        col: "Int64" if dtype == "int64" else "string" if dtype == "object" else dtype
+        for col, dtype in df.dtypes.items()
+        if not str(col).endswith("receptor_type")
+    }
+    vj = _make_arm_table("VJ", source_order)
+    vdj = _make_arm_table("VDJ", source_order)
+    receptor_order = (
+        pd.concat(
+            [
+                vj.loc[:, ["_cell_id", "receptor_type", "_source_order"]],
+                vdj.loc[:, ["_cell_id", "receptor_type", "_source_order"]],
+            ],
+            ignore_index=True,
+        )
+        .groupby(["_cell_id", "receptor_type"], sort=False)["_source_order"]
+        .min()
+        .rename("_receptor_order")
+        .reset_index()
     )
 
-    # Keep rows where receptor types match or one is None
-    df_matched = df[match_condition].copy()
-    df_matched["receptor_type"] = df_matched["VJ_1_receptor_type"].combine_first(df_matched["VDJ_1_receptor_type"])
+    final_df = vj.merge(
+        vdj, on=["_cell_id", "receptor_type", "_ordinal"], how="outer", sort=False, suffixes=("", "_vdj")
+    )
+    final_df["_source_order"] = final_df[["_source_order", "_source_order_vdj"]].min(axis=1)
+    final_df = final_df.merge(receptor_order, on=["_cell_id", "receptor_type"], how="left", sort=False)
+    final_df = final_df.sort_values(["_receptor_order", "_ordinal"], kind="stable")
+    final_df = final_df.set_index("_cell_id")
+    final_df.index.name = df.index.name
 
-    # Identify rows where receptor types do not match
-    df_unmatched = df[~match_condition].copy()
-
-    # Create two new dataframes, one for VJ_1 and another for VDJ_1
-    df_vj = df_unmatched.copy()
-    df_vj["receptor_type"] = df_vj["VJ_1_receptor_type"]
-    df_vj[cols_vdj] = None  # Drop VDJ columns
-
-    df_vdj = df_unmatched.copy()
-    df_vdj["receptor_type"] = df_vdj["VDJ_1_receptor_type"]
-    df_vdj[cols_vj] = None  # Drop VJ columns
-
-    # Combine all data
-    final_df = pd.concat([df_matched, df_vj, df_vdj], ignore_index=False)
-
-    # Drop old receptor type columns
-    return final_df.drop(columns=["VJ_1_receptor_type", "VDJ_1_receptor_type"])
+    helper_cols = ["_ordinal", "_source_order", "_source_order_vdj", "_receptor_order"]
+    final_df = final_df.drop(columns=[col for col in helper_cols if col in final_df.columns])
+    return final_df.astype(source_type_map)
 
 
 class ReverseLookupTable:

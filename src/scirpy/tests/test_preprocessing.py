@@ -7,6 +7,7 @@ from anndata import AnnData
 from scirpy.io import AirrCell, read_10x_vdj
 from scirpy.pp import index_chains
 from scirpy.pp._merge_adata import merge_airr
+from scirpy.util import SCIRPY_MULTI_IR_MODEL
 
 from . import TESTDATA
 from .util import _make_airr_chains_valid
@@ -168,6 +169,83 @@ def test_index_chains_custom_parameters(filter, sort_chains_by, expected_index):
         sort_chains_by=sort_chains_by,
     )
     assert expected_index == ak.to_list(adata.obsm["chain_indices"])[0]
+
+
+def test_index_chains_multi_model_preserves_all_chains():
+    """The multi-chain model keeps all filtered chains instead of clipping to two chains per arm."""
+    airr_chains = [
+        [
+            {"locus": "TRA", "junction_aa": "TRA_low", "umi_count": 10, "productive": True},
+            {"locus": "TRA", "junction_aa": "TRA_high", "umi_count": 30, "productive": True},
+            {"locus": "TRB", "junction_aa": "TRB_mid", "umi_count": 20, "productive": True},
+            {"locus": "TRA", "junction_aa": "TRA_mid", "umi_count": 20, "productive": True},
+            {"locus": "TRB", "junction_aa": "TRB_high", "umi_count": 30, "productive": True},
+            {"locus": "TRB", "junction_aa": "TRB_low", "umi_count": 10, "productive": True},
+        ],
+        [
+            {"locus": "TRA", "junction_aa": "TRA_only", "umi_count": 5, "productive": True},
+        ],
+        [],
+    ]
+    adata = AnnData(X=None, obs=pd.DataFrame(index=[f"cell_{i}" for i in range(len(airr_chains))]))
+    adata.obsm["airr"] = ak.Array(airr_chains)
+
+    index_chains(adata, model="multi")
+
+    assert adata.uns["chain_indices"]["model"] == SCIRPY_MULTI_IR_MODEL
+    assert ak.to_list(adata.obsm["chain_indices"]) == [
+        {"VJ": [1, 3, 0], "VDJ": [4, 2, 5], "multichain": True},
+        {"VJ": [0, None, None], "VDJ": [None, None, None], "multichain": False},
+        {"VJ": [None, None, None], "VDJ": [None, None, None], "multichain": False},
+    ]
+
+
+def test_index_chains_multi_model_multichain_flag_uses_filtered_chains():
+    """Filtered-out chains do not count toward the multichain flag in the multi-chain model."""
+    airr_chains = [
+        [
+            {"locus": "TRA", "junction_aa": "AAA", "umi_count": 5, "productive": True},
+            {"locus": "TRA", "junction_aa": "AAB", "umi_count": 20, "productive": False},
+            {"locus": "TRA", "umi_count": 30, "productive": True},
+            {"locus": "TRA", "junction_aa": "AAD", "umi_count": 10, "productive": True},
+        ]
+    ]
+    adata = AnnData(X=None, obs=pd.DataFrame(index=[f"cell_{i}" for i in range(len(airr_chains))]))
+    adata.obsm["airr"] = ak.Array(airr_chains)
+
+    index_chains(adata, model="multi")
+
+    assert ak.to_list(adata.obsm["chain_indices"])[0] == {
+        "VJ": [3, 0],
+        "VDJ": [None],
+        "multichain": False,
+    }
+
+    index_chains(adata, model="multi", filter=(), key_added="chain_indices_unfiltered")
+    assert ak.to_list(adata.obsm["chain_indices_unfiltered"])[0] == {
+        "VJ": [2, 1, 3, 0],
+        "VDJ": [None],
+        "multichain": True,
+    }
+
+
+@pytest.mark.parametrize("model", ["multi", SCIRPY_MULTI_IR_MODEL])
+def test_index_chains_multi_model_aliases(model):
+    """The public multi-chain model alias and model id store the same model metadata."""
+    adata = AnnData(X=None, obs=pd.DataFrame(index=[f"cell_{i}" for i in range(1)]))
+    adata.obsm["airr"] = ak.Array([[{"locus": "TRA", "junction_aa": "AAA", "productive": True}]])
+
+    index_chains(adata, model=model)
+
+    assert adata.uns["chain_indices"]["model"] == SCIRPY_MULTI_IR_MODEL
+
+
+def test_index_chains_invalid_model():
+    adata = AnnData(X=None, obs=pd.DataFrame(index=[f"cell_{i}" for i in range(1)]))
+    adata.obsm["airr"] = ak.Array([[{"locus": "TRA", "junction_aa": "AAA", "productive": True}]])
+
+    with pytest.raises(ValueError, match="Invalid model"):
+        index_chains(adata, model="not-a-model")
 
 
 def test_merge_airr_identity():

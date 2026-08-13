@@ -3,6 +3,7 @@ import sys
 from typing import cast
 
 import anndata as ad
+import awkward as ak
 import numpy as np
 import numpy.testing as npt
 import pandas as pd
@@ -84,6 +85,181 @@ def test_clonotypes_end_to_end1(adata_define_clonotypes):
     expected_size = [2, 2, 1, 1, np.nan]
     pdt.assert_extension_array_equal(clonotypes.array, pd.array(expected), check_dtype=False)
     npt.assert_equal(clonotype_size.values, expected_size)
+
+
+@pytest.mark.parametrize(
+    "adata_fixture,receptor_arms,dual_ir,within_group,uneven_vdj,expected_clonotypes,expected_size_values,expected_size_cols",
+    [
+        pytest.param(
+            "adata_multichain",
+            "VJ",
+            "any",
+            None,
+            False,
+            [[0, 3, 1, None, None, None], [1, None], [2]],
+            [[30.0, 10.0, 0.0, 20.0], [0.0, 40.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
+            3,
+            id="vj_any",
+        ),
+        pytest.param(
+            "adata_multichain",
+            "VJ",
+            "any",
+            "receptor_type",
+            False,
+            [[0, 3, 1, None, None, None], [1, None], [2]],
+            [[30.0, 10.0, 0.0, 20.0], [0.0, 40.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
+            3,
+            id="vj_any_within_group",
+        ),
+        pytest.param(
+            "adata_multichain",
+            "VJ",
+            "primary_only",
+            None,
+            False,
+            [[0, None, None, None, None, None], [1, None], [2]],
+            [[30.0, 0.0, 0.0], [0.0, 40.0, 0.0], [0.0, 0.0, 50.0]],
+            2,
+            id="vj_primary_only",
+        ),
+        pytest.param(
+            "adata_multichain",
+            "VDJ",
+            "primary_only",
+            None,
+            False,
+            [[None, None, None, 0, None, None], [None, 1], [None]],
+            [[30.0, 0.0], [0.0, 40.0], [0.0, 0.0]],
+            1,
+            id="vdj_primary_only",
+        ),
+        pytest.param(
+            "adata_multichain",
+            "VDJ",
+            "any",
+            None,
+            False,
+            [[None, None, None, 0, 2, 1], [None, 1], [None]],
+            [[30.0, 10.0, 20.0], [0.0, 40.0, 0.0], [0.0, 0.0, 0.0]],
+            2,
+            id="vdj_any",
+        ),
+        pytest.param(
+            "adata_multichain",
+            "any",
+            "any",
+            None,
+            False,
+            [[0, 3, 1, 0, 3, 1], [1, 1], [2]],
+            [[60.0, 20.0, 0.0, 40.0], [0.0, 80.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
+            3,
+            id="any_any",
+        ),
+        pytest.param(
+            "adata_multichain",
+            "all",
+            "any",
+            None,
+            False,
+            [[0, 3, 1, 0, 3, 1], [1, 1], [2]],
+            [[60.0, 20.0, 0.0, 40.0], [0.0, 80.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
+            3,
+            id="all_any",
+        ),
+        pytest.param(
+            "adata_multichain",
+            "any",
+            "any",
+            None,
+            True,
+            [[0, 3, 1, 0, None, None], [1, 1], [2]],
+            [[60.0, 10.0, 0.0, 20.0], [0.0, 80.0, 0.0, 0.0], [0.0, 0.0, 50.0, 0.0]],
+            3,
+            id="any_any_uneven_arm_chain_counts",
+        ),
+        pytest.param(
+            "adata_multichain_mixed_receptor_types",
+            "any",
+            "any",
+            "receptor_type",
+            False,
+            [[1, 0, 3, 0, 1, 2], [1, 4, 1], [0, 0]],
+            [[50.0, 50.0, 10.0, 10.0, 0.0], [0.0, 80.0, 0.0, 0.0, 10.0], [80.0, 0.0, 0.0, 0.0, 0.0]],
+            4,
+            id="any_any_mixed_receptor_type_within_group",
+        ),
+    ],
+)
+def test_define_clonotype_clusters_multi_model_return_values(
+    request,
+    adata_fixture,
+    receptor_arms,
+    dual_ir,
+    within_group,
+    uneven_vdj,
+    expected_clonotypes,
+    expected_size_values,
+    expected_size_cols,
+):
+    """Multi-chain clonotype output is stable across public receptor-arm modes."""
+    adata_multichain = request.getfixturevalue(adata_fixture)
+    if uneven_vdj:
+        adata_multichain = adata_multichain.copy()
+        chain_indices = adata_multichain.obsm["chain_indices"]
+        chain_indices["VDJ"] = ak.Array([[x[0]] for x in ak.to_list(chain_indices["VDJ"])])
+        adata_multichain.obsm["chain_indices"] = chain_indices
+
+    ir.pp.ir_dist(adata_multichain, metric="identity", sequence="aa")
+
+    clonotypes, clonotype_size, res = ir.tl.define_clonotype_clusters(
+        adata_multichain,
+        inplace=False,
+        within_group=within_group,
+        receptor_arms=receptor_arms,
+        dual_ir=dual_ir,
+    )  # type: ignore
+    assert ak.to_list(clonotypes) == expected_clonotypes
+    assert np.max(clonotypes) == expected_size_cols
+    #
+    expected_size = np.array(expected_size_values)
+    assert isinstance(clonotype_size, np.ndarray)
+    npt.assert_equal(clonotype_size, expected_size)
+    assert set(res) == {
+        "distances",
+        "cell_indices",
+        "VJ_clone_chain_indices",
+        "VDJ_clone_chain_indices",
+        "clone_umi_count",
+    }
+
+
+def test_define_clonotype_clusters_multi_model_dual_ir_all_not_implemented(adata_multichain):
+    ir.pp.ir_dist(adata_multichain, metric="identity", sequence="aa")
+
+    with pytest.raises(NotImplementedError, match="dual_ir='all'"):
+        ir.tl.define_clonotype_clusters(
+            adata_multichain,
+            inplace=False,
+            within_group=None,
+            receptor_arms="VJ",
+            dual_ir="all",
+        )
+
+
+def test_define_clonotype_clusters_multi_model_within_group_requires_airr_field(adata_multichain):
+    adata_multichain.obs["receptor_type"] = "TCR"
+    adata_multichain.obsm["airr"] = ak.without_field(adata_multichain.obsm["airr"], "receptor_type")
+    ir.pp.ir_dist(adata_multichain, metric="identity", sequence="aa")
+
+    with pytest.raises(ValueError, match="column `receptor_type` not found in `airr`"):
+        ir.tl.define_clonotype_clusters(
+            adata_multichain,
+            inplace=False,
+            within_group="receptor_type",
+            receptor_arms="VJ",
+            dual_ir="any",
+        )
 
 
 @pytest.mark.parametrize(
